@@ -1,12 +1,14 @@
 """Herramientas de Asistemis que también usa Claude (solo biblioteca estándar).
 
-    python herramientas.py abrir "yt music"      abre una aplicación del menú Inicio
+    python herramientas.py abrir "yt music"      abre una aplicación del menú Inicio (o trae la que ya está abierta)
+    python herramientas.py cerrar "chrome"       cierra sus ventanas, como el botón ✕
     python herramientas.py anotar "comprar pan"  añade una nota al bloc de Asistemis
 
 Solo abre aplicaciones instaladas (las de Get-StartApps) y nunca desinstaladores
 ni herramientas del sistema, así que no sirve para ejecutar comandos arbitrarios.
 """
 
+import ctypes
 import json
 import os
 import re
@@ -138,13 +140,135 @@ def find_app(query):
     return best if score >= 0.75 else None
 
 
+# --- Ventanas abiertas --------------------------------------------------------
+
+def _window_app_id(hwnd):
+    """Identificador de app de una ventana (el mismo que usa el menú Inicio), si lo tiene."""
+    from win32com.propsys import propsys, pscon
+    try:
+        store = propsys.SHGetPropertyStoreForWindow(hwnd, propsys.IID_IPropertyStore)
+        return store.GetValue(pscon.PKEY_AppUserModel_ID).GetValue() or None
+    except Exception:
+        return None
+
+
+def _window_exe(hwnd):
+    import win32process
+    _, pid = win32process.GetWindowThreadProcessId(hwnd)
+    handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return ""
+    try:
+        buf, size = ctypes.create_unicode_buffer(1024), ctypes.c_ulong(1024)
+        ctypes.windll.kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size))
+        return buf.value
+    finally:
+        ctypes.windll.kernel32.CloseHandle(handle)
+
+
+def _app_folder(app_id):
+    """Carpeta del programa si el AppID es una ruta ('{GUID}\\Steam\\Steam.exe' -> ...\\Steam)."""
+    m = re.match(r"(\{[0-9A-Fa-f-]+\})\\(.+)", app_id)
+    if not m and not re.match(r"[A-Za-z]:\\", app_id):
+        return None
+    try:
+        if m:
+            import pywintypes
+            from win32com.shell import shell
+            path = Path(shell.SHGetKnownFolderPath(pywintypes.IID(m.group(1)))) / m.group(2)
+        else:
+            path = Path(app_id)
+        return str(path.parent).lower()
+    except Exception:
+        return None
+
+
+def app_windows(app):
+    """Ventanas abiertas de la app (nombre, AppID), de la más reciente a la más vieja.
+    Se reconoce por su identificador de app, por la carpeta del programa o por el título
+    ("… - Discord"). Una ventana con identificador propio de otra app nunca cuenta: así
+    YouTube Music (que corre dentro de Chrome) no se confunde con Chrome."""
+    import win32con
+    import win32gui
+    name, app_id = app
+    folder = _app_folder(app_id)
+    name_key = _key(name)
+    found = []
+
+    def check(hwnd, _):
+        if (not win32gui.IsWindowVisible(hwnd) or win32gui.GetWindow(hwnd, win32con.GW_OWNER)
+                or win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE) & win32con.WS_EX_TOOLWINDOW):
+            return True
+        title = win32gui.GetWindowText(hwnd)
+        if not title or title.startswith("Asistemis"):
+            return True
+        window_id = _window_app_id(hwnd)
+        if window_id:
+            if window_id.lower() == app_id.lower():
+                found.append(hwnd)
+            elif not folder:
+                return True  # es de otra app
+        exe = _window_exe(hwnd).lower()
+        if (folder and exe.startswith(folder + "\\")) or (exe and _key(Path(exe).stem) == name_key) \
+                or title == name or title.endswith(" - " + name):
+            if hwnd not in found:
+                found.append(hwnd)
+        return True
+
+    win32gui.EnumWindows(check, None)
+    return found
+
+
+def _focus(hwnd):
+    """Trae la ventana al frente (Windows no deja hacerlo desde segundo plano sin este rodeo)."""
+    import win32con
+    import win32gui
+    import win32process
+    user32 = ctypes.windll.user32
+    if win32gui.IsIconic(hwnd):
+        win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+    foreground = user32.GetForegroundWindow()
+    fg_thread = win32process.GetWindowThreadProcessId(foreground)[0] if foreground else 0
+    me = ctypes.windll.kernel32.GetCurrentThreadId()
+    if fg_thread and fg_thread != me:
+        user32.AttachThreadInput(me, fg_thread, True)
+    try:
+        win32gui.BringWindowToTop(hwnd)
+        user32.SetForegroundWindow(hwnd)
+    finally:
+        if fg_thread and fg_thread != me:
+            user32.AttachThreadInput(me, fg_thread, False)
+
+
 def open_app(query):
-    """Abre la aplicación y devuelve su nombre, o None si no hay ninguna parecida."""
+    """Si la app ya está abierta, trae su ventana; si no, la abre.
+    Devuelve (nombre, "focused" | "opened"), o None si no hay ninguna parecida."""
     app = find_app(query)
-    if app:
-        subprocess.Popen(["explorer.exe", f"shell:AppsFolder\\{app[1]}"], creationflags=NO_WINDOW)
-        return app[0]
-    return None
+    if not app:
+        return None
+    try:
+        windows = app_windows(app)
+    except Exception:
+        windows = []
+    if windows:
+        _focus(windows[0])
+        return app[0], "focused"
+    subprocess.Popen(["explorer.exe", f"shell:AppsFolder\\{app[1]}"], creationflags=NO_WINDOW)
+    return app[0], "opened"
+
+
+def close_app(query):
+    """Cierra las ventanas de la app como el botón ✕ (si hay algo sin guardar, la app pregunta).
+    Devuelve (nombre, ventanas cerradas), o None si no hay ninguna app parecida."""
+    import win32con
+    import win32gui
+    app = find_app(query)
+    if not app:
+        return None
+    windows = app_windows(app)
+    for hwnd in windows:
+        win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+    return app[0], len(windows)
 
 
 def web_search(query):
@@ -153,7 +277,7 @@ def web_search(query):
 
 
 def main(argv):
-    if len(argv) < 2 or argv[0] not in ("abrir", "anotar"):
+    if len(argv) < 2 or argv[0] not in ("abrir", "cerrar", "anotar"):
         print(__doc__)
         return 2
     text = " ".join(argv[1:]).strip()
@@ -161,9 +285,16 @@ def main(argv):
         save_note(text)
         print(f"Anotado en {NOTES_FILE}: {text}")
         return 0
-    name = open_app(text)
-    if name:
-        print(f"Abierto: {name}")
+    if argv[0] == "cerrar":
+        result = close_app(text)
+        if result and result[1]:
+            print(f"Cerrado: {result[0]} ({result[1]} ventana/s)")
+            return 0
+        print(f"{result[0]} no está abierto." if result else f"No encontré ninguna aplicación parecida a «{text}».")
+        return 1
+    result = open_app(text)
+    if result:
+        print(("Traída al frente: " if result[1] == "focused" else "Abierto: ") + result[0])
         return 0
     print(f"No encontré ninguna aplicación parecida a «{text}». Instaladas: "
           + ", ".join(sorted({n for n, _ in installed_apps()})))

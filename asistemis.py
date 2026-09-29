@@ -5,8 +5,9 @@ Ctrl+Alt+N (pensado para un botón del mouse) lo enciende y lo apaga:
 - Apagado: micrófono cerrado y modelo fuera de la GPU; no consume nada.
 
 - "Asistemis, anota <lo que sea>… eso es todo": nota con fecha en notas-asistemis.txt (escritorio).
-- "Asistemis, abrime Chrome" / "busca <algo>" / "ejecuta <orden>": se hace en cuanto hay una
-  pausa (abrir la app, buscar en el navegador, o pasárselo a Claude: panel con Ctrl+Alt+C).
+- "Asistemis, abrime Chrome" / "cerrá Chrome" / "busca <algo>" / "ejecuta <orden>": se hace en
+  cuanto hay una pausa (abrir la app o traer la que ya está abierta, cerrarla, buscar en el
+  navegador, o pasárselo a Claude: panel con Ctrl+Alt+C).
 Las notas terminan con "eso es todo", "eso sería todo" o 15 s de silencio.
 """
 
@@ -33,7 +34,8 @@ import pystray
 import sounddevice as sd
 from PIL import Image, ImageDraw
 
-from herramientas import HOTWORDS, NOTES_FILE, fold, installed_apps, open_app, save_note, web_search
+from herramientas import (HOTWORDS, NOTES_FILE, close_app, fold, installed_apps, open_app, save_note,
+                          web_search)
 from interfaz import Interface
 from ordenes import ClaudeChat
 
@@ -100,8 +102,9 @@ def similar(a, b):
 
 
 # qué se pide justo después de "Asistemis"
-COMMANDS = (("note", r"(?:anot|apunt)"), ("open", r"abr[ie]"), ("search", r"busc"), ("order", r"ejecut"))
-ACTIONS = ("open", "search", "order")  # se ejecutan en cuanto hay una pausa
+COMMANDS = (("note", r"(?:anot|apunt)"), ("open", r"abr[ie]"), ("close", r"(?:cerr|cier)"), ("search", r"busc"),
+            ("order", r"ejecut"))
+ACTIONS = ("open", "close", "search", "order")  # se ejecutan en cuanto hay una pausa
 
 
 def command_of(token):
@@ -555,10 +558,19 @@ class Engine(threading.Thread):
                 save_note(body)
                 log.info("nota guardada")
                 self.ui.put(("saved", body))
-            elif kind == "open" and (app := open_app(body)):
+            elif kind == "open" and (result := open_app(body)):
+                app, how = result
                 save_note(body, tag="[abrir]")
-                log.info("abierta: %s", app)
-                self.ui.put(("opened", app))
+                log.info("%s: %s", "traída al frente" if how == "focused" else "abierta", app)
+                self.ui.put((how, app))
+            elif kind == "close":
+                result = close_app(body)
+                log.info("cerrar %s: %s", body, result)
+                if result and result[1]:
+                    save_note(body, tag="[cerrar]")
+                    self.ui.put(("closed", result[0]))
+                else:  # no se le pasa a Claude: no hay nada que cerrar
+                    self.ui.put(("not_open", result[0] if result else body))
             elif kind == "search":
                 web_search(body)
                 save_note(body, tag="[buscar]")
