@@ -64,7 +64,7 @@ BLOCKED = re.compile(r"uninstall|desinstal|registr|regedit|recovery|recuperacion
 ALIASES = {
     "yt music": "YouTube Music", "youtube musica": "YouTube Music", "musica": "YouTube Music",
     "chrome": "Google Chrome", "google": "Google Chrome", "navegador": "Google Chrome",
-    "vs code": "Visual Studio Code", "vscode": "Visual Studio Code", "visual studio": "Visual Studio Code",
+    "vs code": "Visual Studio Code", "vscode": "Visual Studio Code", "vsc": "Visual Studio Code", "visual studio": "Visual Studio Code",
     "code": "Visual Studio Code", "explorador": "Explorador de archivos", "archivos": "Explorador de archivos",
     "riot": "Cliente de Riot", "epic": "Epic Games Launcher", "gog": "GOG GALAXY",
     "rockstar": "Rockstar Games Launcher", "ubisoft": "Ubisoft Connect", "edge": "Microsoft Edge",
@@ -94,9 +94,32 @@ def _load_apps():
                               "Get-StartApps | Select-Object Name, AppID | ConvertTo-Json -Compress"],
                              capture_output=True, text=True, encoding="utf-8", creationflags=NO_WINDOW).stdout
         data = json.loads(out or "[]")
-        _apps = [(a["Name"], a["AppID"]) for a in (data if isinstance(data, list) else [data])
-                 if not BLOCKED.search(fold(a["Name"]))]
+        apps = [(a["Name"], a["AppID"]) for a in (data if isinstance(data, list) else [data])
+                if not BLOCKED.search(fold(a["Name"]))]
+        known = {_key(name) for name, _ in apps}
+        apps += [game for game in steam_games() if _key(game[0]) not in known]  # juegos sin acceso directo
+        _apps = apps
         _apps_time = time.monotonic()
+
+
+def steam_games():
+    """Juegos instalados en Steam [(nombre, "steam://rungameid/<id>")], aunque no tengan acceso directo."""
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam") as k:
+            steam = Path(winreg.QueryValueEx(k, "SteamPath")[0])
+        vdf = (steam / "steamapps" / "libraryfolders.vdf").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    games = []
+    for library in re.findall(r'"path"\s+"([^"]+)"', vdf):
+        folder = Path(library.replace("\\\\", "\\")) / "steamapps"
+        for manifest in folder.glob("appmanifest_*.acf"):
+            text = manifest.read_text(encoding="utf-8", errors="replace")
+            name, appid = re.search(r'"name"\s+"([^"]+)"', text), re.search(r'"appid"\s+"(\d+)"', text)
+            if name and appid and not re.search(r"redistributable|proton|steam linux runtime|steamvr",
+                                                name.group(1), re.I):
+                games.append((name.group(1), f"steam://rungameid/{appid.group(1)}"))
+    return games
 
 
 def installed_apps():
@@ -113,7 +136,7 @@ def _key(text):
     return re.sub(r"[^a-z0-9]", "", fold(text))
 
 
-def find_app(query):
+def find_app(query, min_score=0.75):
     """Busca la aplicación más parecida a lo dicho ('abrime el chrome' -> Google Chrome)."""
     q = fold(query).strip(" .,;:!?¡¿")
     for _ in range(3):
@@ -137,7 +160,7 @@ def find_app(query):
                        default=0) - 0.05)
         if s > score:
             best, score = (name, app_id), s
-    return best if score >= 0.75 else None
+    return best if score >= min_score else None
 
 
 # --- Ventanas abiertas --------------------------------------------------------
@@ -240,10 +263,10 @@ def _focus(hwnd):
             user32.AttachThreadInput(me, fg_thread, False)
 
 
-def open_app(query):
+def open_app(query, min_score=0.75):
     """Si la app ya está abierta, trae su ventana; si no, la abre.
     Devuelve (nombre, "focused" | "opened"), o None si no hay ninguna parecida."""
-    app = find_app(query)
+    app = find_app(query, min_score)
     if not app:
         return None
     try:
@@ -253,7 +276,10 @@ def open_app(query):
     if windows:
         _focus(windows[0])
         return app[0], "focused"
-    subprocess.Popen(["explorer.exe", f"shell:AppsFolder\\{app[1]}"], creationflags=NO_WINDOW)
+    if "://" in app[1]:  # juego de Steam (steam://rungameid/...) u otro enlace
+        os.startfile(app[1])
+    else:
+        subprocess.Popen(["explorer.exe", f"shell:AppsFolder\\{app[1]}"], creationflags=NO_WINDOW)
     return app[0], "opened"
 
 

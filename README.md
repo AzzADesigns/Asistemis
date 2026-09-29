@@ -7,7 +7,8 @@ ningún servidor.
 
 ```
 «Asistemis, anota comprar pan para mañana… eso es todo»   → se guarda en tu bloc de notas
-«Asistemis, abrime Figma»                                 → abre Figma (o la trae si ya estaba abierta)
+«Asistemis, abrime Figma» / «ejecutá Steam» / «jugá al God of War»
+                                                          → lo abre (o lo trae si ya estaba abierto)
 «Asistemis, cerrá Chrome»                                 → cierra Chrome
 «Asistemis, busca recetas de pizza»                       → abre la búsqueda en tu navegador
 «Asistemis, ejecuta resumime las notas de hoy»            → se lo pregunta a Claude (opcional)
@@ -66,10 +67,10 @@ Sin Claude Code, todo lo demás funciona igual.
 | Dices | Qué hace | Cuándo termina |
 |---|---|---|
 | «Asistemis, **anota** …» | Guarda la nota con fecha en `notas-asistemis.txt`, en tu escritorio | Al decir «eso es todo» / «eso sería todo», o tras 15 s de silencio |
-| «Asistemis, **abrime** Chrome» | Abre la app, o trae su ventana si ya está abierta | En cuanto haces una pausa |
+| «Asistemis, **abrime** / **ejecutá** / **iniciá** / **jugá** …» | Abre la app o el juego (también los de tu biblioteca de Steam), o trae su ventana si ya está abierta | En cuanto haces una pausa |
 | «Asistemis, **cerrá** Chrome» | Cierra sus ventanas, como el botón ✕ | En cuanto haces una pausa |
 | «Asistemis, **busca** …» | Abre la búsqueda de Google en tu navegador | En cuanto haces una pausa |
-| «Asistemis, **ejecuta** …» | Se lo pasa a Claude y la respuesta aparece en su panel | En cuanto haces una pausa |
+| «Asistemis, **ejecutá** …» (algo que no es una app) | Se lo pasa a Claude y la respuesta aparece en su panel | En cuanto haces una pausa |
 
 - **Ctrl+Alt+C** abre el panel de Claude, donde también puedes escribir órdenes.
 - Clic derecho en el icono junto al reloj: encender/apagar, anotar sin decir «Asistemis», abrir las
@@ -78,8 +79,8 @@ Sin Claude Code, todo lo demás funciona igual.
 
 ### Consumo de Claude
 
-Anotar, abrir, cerrar y buscar **no usan Claude (0 tokens)**. Solo las órdenes con «ejecuta» (o
-escritas en el panel) consumen del límite de tu plan de Claude. Cada orden es un chat nuevo y
+Anotar, abrir (o «ejecutá» una app o un juego), cerrar y buscar **no usan Claude (0 tokens)**. Solo
+las órdenes con «ejecutá» que no son una app (o las escritas en el panel) consumen del límite de tu plan de Claude. Cada orden es un chat nuevo y
 Claude trabaja con permisos mínimos: puede leer y buscar archivos, buscar en la web, abrir apps y
 anotar, pero **no** borrar, modificar ni instalar nada (ver `claude/CLAUDE.md`).
 

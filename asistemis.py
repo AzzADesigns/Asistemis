@@ -103,8 +103,9 @@ def similar(a, b):
 
 
 # qué se pide justo después de "Asistemis"
-COMMANDS = (("note", r"(?:anot|apunt)"), ("open", r"abr[ie]"), ("close", r"(?:cerr|cier)"), ("search", r"busc"),
-            ("order", r"ejecut"))
+# "ejecutá <app o juego>" lo abre Asistemis; solo si no es una app se lo pasa a Claude
+COMMANDS = (("note", r"(?:anot|apunt)"), ("open", r"(?:abr[ie]|inici|arranc|lanz|jug)"),
+            ("close", r"(?:cerr|cier)"), ("search", r"busc"), ("order", r"ejecut"))
 ACTIONS = ("open", "close", "search", "order")  # se ejecutan en cuanto hay una pausa
 
 
@@ -582,6 +583,13 @@ class Engine(threading.Thread):
                 save_note(body, tag="[buscar]")
                 log.info("búsqueda web")
                 self.ui.put(("searched", body))
+            elif kind == "order" and (result := open_app(body, min_score=0.85)):
+                # "ejecutá Steam": es una app o un juego, no hace falta Claude (más exigente al
+                # comparar, para no quedarse con órdenes de verdad que se parezcan a un nombre)
+                app, how = result
+                save_note(body, tag="[abrir]")
+                log.info("%s: %s", "traída al frente" if how == "focused" else "abierta", app)
+                self.ui.put((how, app))
             else:  # orden, o una aplicación que no se encontró: que se ocupe Claude
                 order = body if kind == "order" else f"Abrime {body}"
                 log.info("orden para Claude")
