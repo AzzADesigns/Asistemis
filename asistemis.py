@@ -1,8 +1,11 @@
-﻿"""Asistemis: anotador por voz, gratis y local.
+﻿"""Asistemis: anotador por voz, gratis y local, que también pasa órdenes a Claude.
 
-Di "Asistemis, anota <lo que sea>... eso es todo" y la nota se guarda con fecha
-y hora en notas-asistemis.txt, en el escritorio. Ctrl+Alt+N empieza/termina
-una nota sin decir la palabra de activación.
+- "Asistemis, anota <lo que sea>... eso es todo": la nota se guarda con fecha y hora
+  en notas-asistemis.txt, en el escritorio.
+- "Asistemis, abrime Chrome": abre la aplicación.
+- "Asistemis, ejecuta <orden>... eso es todo": se la pasa a Claude (panel "Claude").
+La grabación termina con "eso es todo", "eso sería todo" o 15 s de silencio.
+Ctrl+Alt+N empieza/termina sin decir la palabra de activación; Ctrl+Alt+C abre el panel.
 """
 
 import ctypes
@@ -15,11 +18,8 @@ import subprocess
 import threading
 import time
 import tkinter as tk
-import unicodedata
 import wave
-import winreg
 from collections import deque
-from datetime import datetime
 from difflib import SequenceMatcher
 from pathlib import Path
 
@@ -29,6 +29,9 @@ import sounddevice as sd
 from PIL import Image, ImageDraw
 from pynput import keyboard
 
+from herramientas import NOTES_FILE, open_app, save_note, fold
+from ordenes import Panel
+
 # --- Configuración ----------------------------------------------------------
 
 WAKE_WORD = "asistemis"
@@ -36,12 +39,14 @@ WAKE_THRESHOLD = 0.85      # parecido mínimo (0-1) para aceptar la palabra de a
 WAKE_ALIASES = {"asisten"}  # cómo la oye a veces Whisper "base" (una nota vacía se descarta)
 STOP_PHRASES = ("eso es todo", "eso seria todo")
 SILENCE_SECONDS = 15       # cierra la nota tras este silencio aunque no se oiga "eso es todo"
+QUICK_SILENCE = 2.5        # silencio que basta para cerrar un "abrime <aplicación>"
 MAX_SECONDS = 180          # corte de seguridad si no se oye "eso es todo"
 PREROLL_SECONDS = 4.0      # audio previo a la detección que se incluye en la nota
 CHECK_EVERY = 10           # bloques (1 s) entre escuchas de la palabra de activación / del final
 CHECK_WINDOW = 30          # bloques (3 s) que se escuchan cada vez
 SPEECH_LEVEL = 0.3         # volumen mínimo (0-1) para considerar que alguien habla
 HOTKEY = "<ctrl>+<alt>+n"
+PANEL_HOTKEY = "<ctrl>+<alt>+c"
 WHISPER_MODEL = "large-v3-turbo"  # transcribe la nota (small se equivoca mucho con el micro del JBL)
 LISTEN_MODEL = "base"      # más rápido, para escuchar continuamente
 LOG_HEARD = True           # True: registra en el log lo que oye (para ajustar la activación)
@@ -56,24 +61,7 @@ BLOCK = SR // 10           # 100 ms por bloque
 log = logging.getLogger("asistemis")
 
 
-def desktop_dir():
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
-                            r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders") as key:
-            return Path(os.path.expandvars(winreg.QueryValueEx(key, "Desktop")[0]))
-    except OSError:
-        return Path.home() / "Desktop"
-
-
-NOTES_FILE = desktop_dir() / "notas-asistemis.txt"
-
-
 # --- Texto ------------------------------------------------------------------
-
-def fold(text):
-    """Minúsculas y sin tildes, conservando la longitud (para poder cortar el original)."""
-    return "".join(unicodedata.normalize("NFD", c)[0] for c in text.lower())
-
 
 def words(text):
     return re.findall(r"[a-z0-9]+", fold(text))
@@ -104,9 +92,21 @@ def similar(a, b):
     return SequenceMatcher(None, a, b).ratio()
 
 
-def extract_note(text):
-    """'Asistemis, anota hacer tarea 1, eso es todo.' -> 'Hacer tarea 1'
-    Tolera lo que Whisper suele oír mal: 'Asistemi zanato', 'eso que es todo'."""
+# qué se pide justo después de "Asistemis"
+COMMANDS = (("note", r"(?:anot|apunt)"), ("open", r"abr[ie]"), ("order", r"ejecut"))
+
+
+def command_of(token):
+    return next((kind for kind, pattern in COMMANDS if re.match(pattern, token)), None)
+
+
+def parse(text):
+    """Separa qué se pide y el contenido:
+    'Asistemis, anota hacer tarea 1, eso es todo.' -> ('note', 'Hacer tarea 1')
+    'Asistemis, abrime el Chrome.'                 -> ('open', 'El Chrome')
+    'Asistemis, ejecuta busca X, eso es todo.'     -> ('order', 'Busca X')
+    Tolera lo que Whisper suele oír mal ('Asistemi zanato', 'eso que es todo') y el
+    audio previo a "Asistemis" que entra en la grabación."""
     tokens = list(re.finditer(r"[a-z0-9]+", fold(text)))  # misma longitud que text
     # corta en la aparición más parecida a "eso es todo" / "eso sería todo" (2-4 palabras)
     end = len(text)
@@ -117,30 +117,38 @@ def extract_note(text):
     if best[0] >= 0.8:
         end = tokens[best[1]].start()
     tokens = [t for t in tokens if t.end() <= end]
-    # quita el "Asistemis anota" inicial (1-3 palabras), aunque venga deformado
-    start = 0
-    heads = [(max(similar(head, WAKE_WORD + "anota"), similar(head, WAKE_WORD + "apunta"),
-                  similar(head, WAKE_WORD)), n)
-             for n in (1, 2, 3) if len(tokens) >= n
-             for head in ["".join(t.group() for t in tokens[:n])]]
-    score, n = max(heads, default=(0, 0))
+    # busca "Asistemis" (1-3 palabras, deformado o pegado a "anota") entre las primeras palabras
+    heads = []
+    for i in range(min(len(tokens), 10)):
+        for n in (1, 2, 3):
+            if i + n <= len(tokens):
+                head = "".join(t.group() for t in tokens[i:i + n])
+                with_note = max(similar(head, WAKE_WORD + "anota"), similar(head, WAKE_WORD + "apunta"))
+                alone = max(similar(head, WAKE_WORD), 0.8 if head in WAKE_ALIASES else 0)
+                heads.append((max(with_note, alone), -i, n, with_note > alone))
+    score, i, n, with_note = max(heads, default=(0, 0, 0, False))
+    kind, start = "note", 0
     if score >= 0.75:
-        start = tokens[n - 1].end()
-        nxt = tokens[n].group() if len(tokens) > n else ""
-        if re.match(r"(?:anot|apunt)", nxt) or (re.search(r"n[aeiou]t", nxt) and similar(nxt, "anota") >= 0.5):
-            start = tokens[n].end()
+        k = -i + n  # primera palabra después de "Asistemis"
+        start = tokens[k - 1].end()
+        nxt = tokens[k].group() if len(tokens) > k else ""
+        if with_note:  # "Asistemis anota" oído junto ("asisten sanota"): lo que sigue es la nota
+            pass
+        elif command_of(nxt):
+            kind, start = command_of(nxt), tokens[k].end()
+        elif nxt == "a" and len(tokens) > k + 1 and command_of(nxt + tokens[k + 1].group()) == "note":
+            start = tokens[k + 1].end()  # "a notar"
+        elif re.search(r"n[aeiou]t", nxt) and similar(nxt, "anota") >= 0.5:
+            start = tokens[k].end()
+    elif tokens and command_of(tokens[0].group()):  # grabación con Ctrl+Alt+N: "ejecuta …"
+        kind, start = command_of(tokens[0].group()), tokens[0].end()
     else:
         command = next((t for t in tokens[:3] if re.match(r"(?:anot|apunt)", t.group())), None)
         if command:
             start = command.end()
-    note = text[start:end].strip(" \t\n,.;:¡!¿?-—'\"")
-    note = re.sub(r"[\s,;.]+(?:y|y bueno|bueno)$", "", note, flags=re.I)  # "... y bueno, eso es todo"
-    return note[:1].upper() + note[1:]
-
-
-def save_note(note):
-    with NOTES_FILE.open("a", encoding="utf-8") as f:
-        f.write(f"{datetime.now():%d/%m/%Y %H:%M} — {note}\n")
+    body = text[start:end].strip(" \t\n,.;:¡!¿?-—'\"")
+    body = re.sub(r"[\s,;.]+(?:y|y bueno|bueno)$", "", body, flags=re.I)  # "... y bueno, eso es todo"
+    return kind, body[:1].upper() + body[1:]
 
 
 def open_notes():
@@ -178,6 +186,9 @@ class Engine(threading.Thread):
         self.checking = threading.Event()  # hay una escucha en curso
         self.generation = 0                # cambia con cada estado: descarta escuchas viejas
         self.blocks_seen = 0
+        self.last_heard = ""               # lo último que oyó la escucha de activación
+        self.heard = []                    # lo que oye mientras graba
+        self.opening = False               # parece un "abrime <aplicación>": basta poco silencio
 
     def run(self):
         try:
@@ -211,7 +222,7 @@ class Engine(threading.Thread):
                     if level(block) >= SPEECH_LEVEL:
                         self.last_voice = now
                     self._maybe_check(self.chunks, "stop")
-                    if now - self.last_voice > SILENCE_SECONDS:
+                    if now - self.last_voice > (QUICK_SILENCE if self.opening else SILENCE_SECONDS):
                         log.info("silencio: nota cerrada")
                         self._finish()
                     elif now - self.started > MAX_SECONDS:
@@ -240,6 +251,8 @@ class Engine(threading.Thread):
             text = "".join(s.text for s in segments).strip()
             if text and LOG_HEARD:
                 log.info("oído (%s): %s", kind, text)
+            if text:
+                self.commands.put(("heard", generation, text))
             if text and (heard_wake if kind == "wake" else heard_stop)(text):
                 self.commands.put((kind, generation))
         except Exception:
@@ -282,17 +295,23 @@ class Engine(threading.Thread):
                 cmd = self.commands.get_nowait()
             except queue.Empty:
                 return True
-            if isinstance(cmd, tuple):  # resultado de una escucha: ("wake" | "stop", generación)
-                cmd, generation = cmd
+            if isinstance(cmd, tuple):  # resultado de una escucha: ("wake" | "stop" | "heard", generación, …)
+                cmd, generation, *text = cmd
                 if generation != self.generation:
                     continue
-            if cmd == "quit":
+            if cmd == "heard":
+                if self.state == self.IDLE:
+                    self.last_heard = text[0]
+                elif self.state == self.RECORDING:
+                    self.heard.append(text[0])
+                    self.opening = self._is_opening(self.heard)
+            elif cmd == "quit":
                 return False
-            if cmd == "wake" and self.state == self.IDLE:
+            elif cmd == "wake" and self.state == self.IDLE:
                 log.info("palabra de activación detectada")
-                self._start(list(self.preroll))
+                self._start(list(self.preroll), [self.last_heard])
             elif cmd == "toggle" and self.state == self.IDLE:
-                self._start([])
+                self._start([], [])
             elif cmd in ("toggle", "finish", "stop") and self.state == self.RECORDING:
                 self._finish()
             elif cmd == "cancel" and self.state == self.RECORDING:
@@ -301,12 +320,20 @@ class Engine(threading.Thread):
             elif cmd == "done":
                 self._idle()
 
-    def _start(self, preroll):
+    def _start(self, preroll, heard):
         self.state = self.RECORDING
         self.generation += 1
         self.chunks = preroll
+        self.heard = heard
+        self.opening = self._is_opening(heard)
         self.started = self.last_voice = time.monotonic()
         self.ui.put(("listening",))
+
+    @staticmethod
+    def _is_opening(heard):
+        """¿Ya se oyó "Asistemis, abrime <algo>"? Entonces basta con poco silencio."""
+        kind, body = parse(" ".join(heard))
+        return kind == "open" and bool(body)
 
     def _finish(self):
         if not self.chunks:
@@ -352,13 +379,21 @@ class Engine(threading.Thread):
             text = "".join(s.text for s in segments).strip()
             if LOG_HEARD:
                 log.info("nota completa: %s", text)
-            note = extract_note(text)
-            if note:
-                save_note(note)
-                log.info("nota guardada")
-                self.ui.put(("saved", note))
-            else:
+            kind, body = parse(text)
+            if not body:
                 self.ui.put(("nothing",))
+            elif kind == "note":
+                save_note(body)
+                log.info("nota guardada")
+                self.ui.put(("saved", body))
+            elif kind == "open" and (app := open_app(body)):
+                save_note(body, tag="[abrir]")
+                log.info("abierta: %s", app)
+                self.ui.put(("opened", app))
+            else:  # orden, o una aplicación que no se encontró: que se ocupe Claude
+                order = body if kind == "order" else f"Abrime {body}"
+                log.info("orden para Claude")
+                self.ui.put(("order", order))
         except Exception as e:
             log.exception("error al transcribir")
             self.ui.put(("error", str(e)))
@@ -374,8 +409,8 @@ BARS = 36
 
 
 class Widget:
-    def __init__(self, root, engine, ui):
-        self.root, self.engine, self.ui = root, engine, ui
+    def __init__(self, root, engine, ui, panel):
+        self.root, self.engine, self.ui, self.panel = root, engine, ui, panel
         self.hide_job = None
         self.levels = deque([0.0] * BARS, maxlen=BARS)
 
@@ -471,7 +506,7 @@ class Widget:
                 self.levels.append(args[0])
                 redraw = True
             elif msg == "ready":
-                self.set("Listo. Di «Asistemis, anota…»", GREEN)
+                self.set("Listo. Di «Asistemis, anota… / abrime… / ejecuta…»", GREEN)
                 self._hide_after(3000)
             elif msg == "listening":
                 self.levels.extend([0.0] * BARS)
@@ -485,6 +520,15 @@ class Widget:
             elif msg == "saved":
                 self.set("✓ Anotado", GREEN, note=args[0])
                 self._hide_after(4000)
+            elif msg == "opened":
+                self.set(f"✓ Abriendo {args[0]}", GREEN)
+                self._hide_after(2500)
+            elif msg == "order":
+                self.set("→ Enviado a Claude", ACCENT, note=args[0])
+                self._hide_after(2500)
+                self.panel.submit(args[0], "voz")
+            elif msg == "panel":
+                self.panel.show()
             elif msg == "nothing":
                 self.set("No entendí nada, no se guardó", MUTED)
                 self._hide_after(3000)
@@ -536,7 +580,7 @@ def main():
     engine = Engine(ui)
     root = tk.Tk()
     root.title("Asistemis")
-    Widget(root, engine, ui)
+    Widget(root, engine, ui, Panel(root))
 
     def quit_app():
         engine.commands.put("quit")
@@ -544,11 +588,13 @@ def main():
 
     tray = pystray.Icon("asistemis", tray_image(), "Asistemis", menu=pystray.Menu(
         pystray.MenuItem("Anotar ahora (Ctrl+Alt+N)", lambda: engine.commands.put("toggle"), default=True),
+        pystray.MenuItem("Claude (Ctrl+Alt+C)", lambda: ui.put(("panel",))),
         pystray.MenuItem("Abrir notas", open_notes),
         pystray.MenuItem("Salir", quit_app),
     ))
     tray.run_detached()
-    hotkeys = keyboard.GlobalHotKeys({HOTKEY: lambda: engine.commands.put("toggle")})
+    hotkeys = keyboard.GlobalHotKeys({HOTKEY: lambda: engine.commands.put("toggle"),
+                                      PANEL_HOTKEY: lambda: ui.put(("panel",))})
     hotkeys.start()
     engine.start()
     log.info("Asistemis iniciado")

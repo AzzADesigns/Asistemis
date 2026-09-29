@@ -6,6 +6,8 @@ charset-normalizer==3.5.1
 click==8.5.0
 colorama==0.4.6
 ctranslate2==4.8.2
+customtkinter==6.0.0
+darkdetect==0.8.0
 faster-whisper==1.2.1
 filelock==4.0.6
 flatbuffers==25.12.19
