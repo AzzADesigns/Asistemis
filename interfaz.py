@@ -110,8 +110,12 @@ class Glass:
             form.Size = D.Size(*self.size)
             form.BackColor = D.Color.Black  # negro = deja ver el material de Windows
             hwnd = self.hwnd = form.Handle.ToInt32()
+            # pywebview la mostró un momento al cargar (y Windows le dio botón en la barra de tareas):
+            # primero se oculta, así el botón se va; recién después se marca como "sin barra de tareas"
+            # (si se oculta ya marcada, Windows deja el botón huérfano)
+            user32.ShowWindow(hwnd, SW_HIDE)
             ex = user32.GetWindowLongW(hwnd, -20)
-            user32.SetWindowLongW(hwnd, -20, (ex | 0x80) & ~0x40000)  # sin botón en la barra de tareas
+            user32.SetWindowLongW(hwnd, -20, (ex | 0x80) & ~0x40000)  # WS_EX_TOOLWINDOW, sin WS_EX_APPWINDOW
             m = MARGINS(-1, -1, -1, -1)
             dwmapi.DwmExtendFrameIntoClientArea(wintypes.HWND(hwnd), ctypes.byref(m))
             _dwm(hwnd, 20, 0)   # tema claro

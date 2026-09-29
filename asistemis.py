@@ -657,6 +657,8 @@ def main():
                                          "Asistemis", 0x40)
         return
 
+    # identidad propia para Windows: "Asistemis", no "Python" (barra de tareas, notificaciones)
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Asistemis")
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(1)
     except (AttributeError, OSError):
