@@ -22,7 +22,6 @@ import subprocess
 import sys
 import threading
 import time
-import tkinter as tk
 import wave
 from collections import deque
 from ctypes import wintypes
@@ -35,7 +34,8 @@ import sounddevice as sd
 from PIL import Image, ImageDraw
 
 from herramientas import NOTES_FILE, fold, installed_apps, open_app, save_note, web_search
-from ordenes import Panel
+from interfaz import Interface
+from ordenes import ClaudeChat
 
 # --- Configuración ----------------------------------------------------------
 
@@ -575,157 +575,6 @@ class Engine(threading.Thread):
             self.commands.put("done")
 
 
-# --- Ventana ----------------------------------------------------------------
-
-BG, BORDER, FG, MUTED = "#1e1f24", "#3a3c44", "#ececef", "#9a9ca5"
-ACCENT, RED, GREEN, BUTTON = "#4f8cff", "#ff5a5a", "#3ecf8e", "#2d2f36"
-BARS = 36
-
-
-class Widget:
-    def __init__(self, root, engine, ui, panel):
-        self.root, self.engine, self.ui, self.panel = root, engine, ui, panel
-        self.hide_job = None
-        self.levels = deque([0.0] * BARS, maxlen=BARS)
-
-        scale = root.winfo_fpixels("1i") / 96
-        self.w, self.h = int(340 * scale), int(172 * scale)
-        x = root.winfo_screenwidth() - self.w - int(24 * scale)
-        y = root.winfo_screenheight() - self.h - int(72 * scale)
-        root.geometry(f"{self.w}x{self.h}+{x}+{y}")
-        root.overrideredirect(True)
-        root.attributes("-topmost", True)
-        root.attributes("-alpha", 0.96)
-        root.configure(bg=BORDER)
-
-        frame = tk.Frame(root, bg=BG, padx=16, pady=10)
-        frame.pack(fill="both", expand=True, padx=1, pady=1)
-
-        header = tk.Frame(frame, bg=BG)
-        header.pack(fill="x")
-        self.dot = tk.Label(header, text="●", bg=BG, fg=MUTED, font=("Segoe UI", 10))
-        self.dot.pack(side="left")
-        tk.Label(header, text="Asistemis", bg=BG, fg=FG, font=("Segoe UI Semibold", 11)).pack(side="left", padx=6)
-
-        self.status = tk.Label(frame, bg=BG, fg=MUTED, font=("Segoe UI", 9), anchor="w")
-        self.status.pack(fill="x", pady=(2, 4))
-
-        self.canvas = tk.Canvas(frame, height=int(40 * scale), bg=BG, highlightthickness=0)
-        self.canvas.pack(fill="x")
-
-        self.note = tk.Label(frame, bg=BG, fg=FG, font=("Segoe UI", 10), anchor="w", justify="left",
-                             wraplength=self.w - int(34 * scale))
-        self.note.pack(fill="x")
-
-        self.buttons = tk.Frame(frame, bg=BG)
-        self.buttons.pack(side="bottom", fill="x")
-        for text, cmd in (("Listo", "finish"), ("Cancelar", "cancel")):
-            tk.Button(self.buttons, text=text, command=lambda c=cmd: engine.commands.put(c),
-                      bg=BUTTON, fg=FG, activebackground=BORDER, activeforeground=FG, relief="flat",
-                      bd=0, padx=12, pady=2, cursor="hand2", font=("Segoe UI", 9)).pack(side="right", padx=(6, 0))
-
-        for widget in (frame, header, self.status, self.note):
-            widget.bind("<ButtonPress-1>", self._drag_start)
-            widget.bind("<B1-Motion>", self._drag)
-
-        self.set("Iniciando…", MUTED, buttons=False)
-        self._show()
-        self._poll()
-
-    def _drag_start(self, e):
-        self.drag_from = (e.x_root - self.root.winfo_x(), e.y_root - self.root.winfo_y())
-
-    def _drag(self, e):
-        dx, dy = self.drag_from
-        self.root.geometry(f"+{e.x_root - dx}+{e.y_root - dy}")
-
-    def _show(self):
-        if self.hide_job:
-            self.root.after_cancel(self.hide_job)
-            self.hide_job = None
-        self.root.deiconify()
-        self.root.lift()
-
-    def _hide_after(self, ms):
-        self._show()
-        self.hide_job = self.root.after(ms, self.root.withdraw)
-
-    def set(self, status, color, note="", buttons=False):
-        self.status.config(text=status)
-        self.dot.config(fg=color)
-        self.note.config(text=note if len(note) < 160 else note[:157] + "…")
-        if buttons:
-            self.buttons.pack(side="bottom", fill="x")
-        else:
-            self.buttons.pack_forget()
-
-    def _draw(self):
-        c = self.canvas
-        c.delete("all")
-        w, h = c.winfo_width(), c.winfo_height()
-        step = w / BARS
-        for i, v in enumerate(self.levels):
-            bh = max(2, v * h)
-            x = i * step + step * 0.2
-            c.create_rectangle(x, (h - bh) / 2, x + step * 0.6, (h + bh) / 2, fill=ACCENT, width=0)
-
-    def _poll(self):
-        redraw = False
-        while True:
-            try:
-                msg, *args = self.ui.get_nowait()
-            except queue.Empty:
-                break
-            if msg == "level":
-                self.levels.append(args[0])
-                redraw = True
-            elif msg in ("ready", "mode"):
-                if args[0]:
-                    self.set("Encendido. Di «Asistemis, anota… / abrime… / busca… / ejecuta…»", GREEN)
-                else:
-                    self.set("Apagado: no escucha ni consume nada. Ctrl+Alt+N para encender", MUTED)
-                self._hide_after(3000)
-            elif msg == "listening":
-                self.levels.extend([0.0] * BARS)
-                redraw = True
-                self.set("Escuchando… di «eso es todo» para terminar", RED, buttons=True)
-                self._show()
-            elif msg == "transcribing":
-                self.levels.extend([0.0] * BARS)
-                redraw = True
-                self.set("Transcribiendo…", ACCENT)
-            elif msg == "saved":
-                self.set("✓ Anotado", GREEN, note=args[0])
-                self._hide_after(4000)
-            elif msg == "opened":
-                self.set(f"✓ Abriendo {args[0]}", GREEN)
-                self._hide_after(2500)
-            elif msg == "searched":
-                self.set("✓ Buscando en el navegador", GREEN, note=args[0])
-                self._hide_after(2500)
-            elif msg == "order":
-                self.set("→ Enviado a Claude", ACCENT, note=args[0])
-                self._hide_after(2500)
-                self.panel.submit(args[0], "voz")
-            elif msg == "panel":
-                self.panel.show()
-            elif msg == "nothing":
-                self.set("No entendí nada, no se guardó", MUTED)
-                self._hide_after(3000)
-            elif msg == "cancelled":
-                self.set("Cancelado", MUTED)
-                self._hide_after(1200)
-            elif msg == "error":
-                self.set("Error", RED, note=args[0])
-                self._hide_after(8000)
-            elif msg == "quit":
-                self.root.destroy()
-                return
-        if redraw:
-            self._draw()
-        self.root.after(40, self._poll)
-
-
 # --- Atajos -----------------------------------------------------------------
 
 class Hotkeys(threading.Thread):
@@ -789,10 +638,8 @@ def main():
 
     ui = queue.Queue()
     engine = Engine(ui)
-    root = tk.Tk()
-    root.title("Asistemis")
-    panel = Panel(root)
-    Widget(root, engine, ui, panel)
+    chat = ClaudeChat(ui)
+    interface = Interface(engine, ui, chat)
 
     def quit_app():
         engine.commands.put("quit")
@@ -813,8 +660,9 @@ def main():
     engine.start()
     log.info("Asistemis iniciado")
 
-    root.mainloop()
-    panel.close()
+    import webview
+    webview.start(interface.start)  # hasta que se cierran las ventanas (Salir)
+    chat.stop()
     hotkeys.stop()
     tray.stop()
 

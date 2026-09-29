@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Asistemis</title>
+<style>
+/*BASE*/
+.bubble {
+  position: absolute; inset: 4px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: rgba(255, 255, 255, .86);
+  box-shadow: inset 0 0 0 1px var(--highlight), 0 2px 8px rgba(0, 0, 0, .22);
+  cursor: grab;
+}
+.bubble:active { cursor: grabbing; }
+.mic { margin-top: -6px; transition: color .2s; }
+.gpu { position: absolute; bottom: 7px; font-size: 9px; font-weight: 700; color: var(--muted); letter-spacing: .02em; }
+.ring { position: absolute; inset: 3px; border-radius: 50%; box-shadow: 0 0 0 2px var(--green); opacity: .55; }
+.rec .ring { box-shadow: 0 0 0 2px var(--red); animation: ring 1.4s ease-out infinite; opacity: 1; }
+.rec .mic { color: var(--red); }
+@keyframes ring { 70% { transform: scale(1.08); opacity: 0; } 100% { opacity: 0; } }
+</style>
+</head>
+<body>
+<div class="bubble" id="bubble" title="Asistemis encendido · doble clic: Claude">
+  <div class="ring"></div>
+  <svg class="mic" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+  <div class="gpu" id="gpu">GPU –</div>
+</div>
+<script>
+const bubble = document.getElementById("bubble");
+function state(s) { bubble.className = "bubble" + (s === "rec" ? " rec" : ""); }
+function gpu(v) { document.getElementById("gpu").textContent = "GPU " + v + "%"; }
+
+// arrastrar la burbuja (en píxeles de pantalla)
+let drag = null, pending = [0, 0], frame = 0;
+bubble.addEventListener("pointerdown", e => { drag = [e.screenX, e.screenY]; bubble.setPointerCapture(e.pointerId); });
+bubble.addEventListener("pointermove", e => {
+  if (!drag) return;
+  pending[0] += (e.screenX - drag[0]) * devicePixelRatio;
+  pending[1] += (e.screenY - drag[1]) * devicePixelRatio;
+  drag = [e.screenX, e.screenY];
+  if (!frame) frame = requestAnimationFrame(() => {
+    frame = 0;
+    const [dx, dy] = pending; pending = [0, 0];
+    if (dx || dy) pywebview.api.drag(Math.round(dx), Math.round(dy));
+  });
+});
+bubble.addEventListener("pointerup", () => { drag = null; });
+bubble.addEventListener("dblclick", () => pywebview.api.open_claude());
+</script>
+</body>
+</html>

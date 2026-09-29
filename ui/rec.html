@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Asistemis</title>
+<style>
+/*BASE*/
+.card { display: flex; flex-direction: column; padding: 14px 16px 12px; gap: 8px; }
+.head { display: flex; align-items: center; gap: 10px; }
+.title { font: 600 14px/1.2 "Segoe UI Variable Display", "Segoe UI", sans-serif; }
+.brand { margin-left: auto; font-size: 11px; font-weight: 600; color: var(--faint); letter-spacing: .02em; }
+.timer { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12px; margin-left: 6px; }
+.detail {
+  color: var(--muted); font-size: 12.5px; min-height: 18px;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  user-select: text;
+}
+.ok .detail, .claude .detail { color: var(--ink); }
+canvas { width: 100%; height: 40px; display: none; }
+.foot { display: none; justify-content: flex-end; gap: 8px; margin-top: auto; }
+.is-rec canvas, .is-rec .foot { display: flex; }
+.is-rec .detail { display: none; }
+</style>
+</head>
+<body>
+<div class="glass card" id="card">
+  <div class="head">
+    <div class="dot" id="dot"></div>
+    <div class="title" id="title">Asistemis</div>
+    <div class="timer" id="timer"></div>
+    <div class="brand">ASISTEMIS</div>
+  </div>
+  <canvas id="wave"></canvas>
+  <div class="detail" id="detail"></div>
+  <div class="foot">
+    <button class="btn" onclick="pywebview.api.cancel()">Cancelar</button>
+    <button class="btn primary" onclick="pywebview.api.finish()">Listo</button>
+  </div>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const BARS = 44, bars = new Array(BARS).fill(0);
+let started = 0, tick = 0;
+
+function show(kind, title, detail) {
+  const card = $("card");
+  const recording = kind === "rec";
+  card.className = "glass card enter " + kind + (recording ? " is-rec" : "");
+  $("dot").className = "dot " + kind;
+  $("title").textContent = title;
+  $("detail").textContent = detail || "";
+  clearInterval(tick);
+  $("timer").textContent = "";
+  if (recording) {
+    bars.fill(0); draw();
+    started = Date.now();
+    tick = setInterval(() => {
+      const s = Math.floor((Date.now() - started) / 1000);
+      $("timer").textContent = Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+    }, 500);
+  }
+}
+function leave() { $("card").classList.add("leave"); clearInterval(tick); }
+
+function levels(values) { for (const v of values) { bars.shift(); bars.push(v); } draw(); }
+function draw() {
+  const c = $("wave"), dpr = devicePixelRatio;
+  const w = c.clientWidth * dpr, h = c.clientHeight * dpr;
+  if (c.width !== w) { c.width = w; c.height = h; }
+  const g = c.getContext("2d");
+  g.clearRect(0, 0, w, h);
+  const step = w / BARS, bw = Math.max(2, step * .5);
+  bars.forEach((v, i) => {
+    const bh = Math.max(3 * dpr, v * h);
+    g.fillStyle = `rgba(14,15,18,${.25 + v * .75})`;
+    g.beginPath();
+    g.roundRect(i * step + (step - bw) / 2, (h - bh) / 2, bw, bh, bw / 2);
+    g.fill();
+  });
+}
+</script>
+</body>
+</html>

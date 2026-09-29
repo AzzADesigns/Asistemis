@@ -1,0 +1,81 @@
+/* Estilo común: cristal blanco sobre el acrílico de Windows, texto negro */
+:root {
+  --ink: #0e0f12;
+  --muted: #5d606a;
+  --faint: #8a8d96;
+  --glass: rgba(255, 255, 255, .60);
+  --glass-strong: rgba(255, 255, 255, .78);
+  --line: rgba(15, 17, 22, .08);
+  --highlight: rgba(255, 255, 255, .85);
+  --green: #16a34a;
+  --green-glow: rgba(34, 197, 94, .35);
+  --red: #e5484d;
+  --red-glow: rgba(229, 72, 77, .30);
+  --blue: #2563eb;
+  --violet: #7c5cff;
+  --amber: #d97706;
+  --radius: 8px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  color: var(--ink);
+  font: 13px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+.glass {
+  height: 100%;
+  background: var(--glass);
+  box-shadow: inset 0 0 0 1px var(--highlight), inset 0 1px 0 #fff;
+  border-radius: var(--radius);
+}
+
+.dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #b9bcc4;
+  transition: background .25s, box-shadow .25s;
+}
+.dot.on { background: var(--green); box-shadow: 0 0 0 4px var(--green-glow), 0 0 14px var(--green); }
+.dot.rec { background: var(--red); box-shadow: 0 0 0 4px var(--red-glow); animation: pulse 1.4s ease-in-out infinite; }
+.dot.busy { background: var(--blue); box-shadow: 0 0 0 4px rgba(37, 99, 235, .18); animation: pulse 1s ease-in-out infinite; }
+.dot.ok { background: var(--green); box-shadow: 0 0 0 4px var(--green-glow); }
+.dot.claude { background: var(--violet); box-shadow: 0 0 0 4px rgba(124, 92, 255, .2); }
+.dot.error { background: var(--red); }
+
+@keyframes pulse { 50% { transform: scale(.78); opacity: .7; } }
+
+.enter { animation: enter .22s cubic-bezier(.2, .8, .2, 1) both; }
+.leave { animation: leave .2s ease-in both; }
+@keyframes enter { from { opacity: 0; transform: translateY(6px); } }
+@keyframes leave { to { opacity: 0; transform: translateY(4px); } }
+
+button {
+  font: inherit;
+  color: var(--ink);
+  border: 0;
+  cursor: pointer;
+}
+.btn {
+  height: 30px;
+  padding: 0 14px;
+  border-radius: 15px;
+  background: rgba(255, 255, 255, .7);
+  box-shadow: inset 0 0 0 1px var(--line), 0 1px 2px rgba(0, 0, 0, .06);
+  font-weight: 600;
+  font-size: 12px;
+  transition: background .15s, transform .1s;
+}
+.btn:hover { background: #fff; }
+.btn:active { transform: scale(.97); }
+.btn.primary { background: var(--ink); color: #fff; box-shadow: 0 2px 8px rgba(0, 0, 0, .18); }
+.btn.primary:hover { background: #26282e; }

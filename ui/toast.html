@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Asistemis</title>
+<style>
+/*BASE*/
+.toast { display: flex; align-items: center; gap: 14px; padding: 0 20px; }
+.title { font: 600 15px/1.2 "Segoe UI Variable Display", "Segoe UI", sans-serif; letter-spacing: -.01em; }
+.sub { margin-top: 3px; color: var(--muted); font-size: 12px; }
+.icon { margin-left: auto; opacity: .35; }
+</style>
+</head>
+<body>
+<div class="glass toast" id="card">
+  <div class="dot" id="dot"></div>
+  <div>
+    <div class="title" id="title">Asistemis</div>
+    <div class="sub" id="sub"></div>
+  </div>
+  <svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+function show(on) {
+  $("dot").className = "dot" + (on ? " on" : "");
+  $("title").textContent = on ? "Asistemis encendido" : "Asistemis apagado";
+  $("sub").textContent = on ? "Di «Asistemis…» cuando quieras" : "No escucha ni consume nada";
+  const card = $("card");
+  card.classList.remove("enter", "leave");
+  void card.offsetWidth;
+  card.classList.add("enter");
+}
+function leave() { $("card").classList.replace("enter", "leave"); }
+</script>
+</body>
+</html>
