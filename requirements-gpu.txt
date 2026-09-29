@@ -1,0 +1,3 @@
+# Solo con tarjeta NVIDIA: librerías CUDA para que Whisper corra en la GPU (~1,5 GB)
+nvidia-cublas-cu12==12.9.2.10
+nvidia-cudnn-cu12==9.26.0.51

@@ -57,7 +57,8 @@ HOTKEY = "N"               # Ctrl+Alt+N: enciende / apaga Asistemis (asígnalo a
 PANEL_HOTKEY = "C"         # Ctrl+Alt+C: panel de Claude
 WHISPER_MODEL = "large-v3-turbo"  # transcribe la nota (small se equivoca mucho con el micro del JBL)
 LISTEN_MODEL = "base"      # sin tarjeta gráfica: más rápido, para escuchar continuamente
-LOG_HEARD = True           # True: registra en el log lo que oye (para ajustar la activación)
+LOG_HEARD = False          # se lee de ajustes.json ("registrar_lo_oido"): guarda en el log lo que oye
+                           # y el audio de la última nota; útil para ajustar la activación, no por privacidad
 
 BASE = Path(__file__).resolve().parent
 WHISPER_DIR = BASE / "models" / "whisper"
@@ -163,6 +164,12 @@ def parse(text):
     return kind, body[:1].upper() + body[1:]
 
 
+def downloaded(model):
+    """¿El modelo de Whisper ya está en models/whisper? Entonces no hace falta internet.
+    Si no, se descarga la primera vez (turbo ~1,6 GB, base ~150 MB)."""
+    return any(WHISPER_DIR.glob(f"models--*--faster-whisper-{model}/snapshots/*/model.bin"))
+
+
 def load_settings():
     try:
         return json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
@@ -224,7 +231,6 @@ class Engine(threading.Thread):
 
     def run(self):
         try:
-            os.environ["HF_HUB_OFFLINE"] = "1"  # los modelos ya están descargados: no consultar internet
             threading.Thread(target=installed_apps, daemon=True).start()  # lista de apps, para abrir al instante
             self._load_models()
             stream = self._open_stream()
@@ -502,7 +508,7 @@ class Engine(threading.Thread):
         if ctranslate2.get_cuda_device_count() > 0:
             try:
                 model = WhisperModel(WHISPER_MODEL, device="cuda", compute_type="float16",
-                                     download_root=str(WHISPER_DIR))
+                                     download_root=str(WHISPER_DIR), local_files_only=downloaded(WHISPER_MODEL))
                 model.transcribe(np.zeros(SR, np.float32), language="es")  # calienta la GPU
                 self.listener = self.whisper = model
                 self.gpu, self.check_every, self.gpu_loaded = True, CHECK_EVERY_GPU, True
@@ -512,13 +518,13 @@ class Engine(threading.Thread):
             except Exception:
                 log.exception("no se pudo usar la GPU; sigo con la CPU")
         self.listener = WhisperModel(LISTEN_MODEL, device="cpu", compute_type="int8",
-                                     download_root=str(WHISPER_DIR))
+                                     download_root=str(WHISPER_DIR), local_files_only=downloaded(LISTEN_MODEL))
         threading.Thread(target=self._load_whisper, args=(WhisperModel,), daemon=True).start()
 
     def _load_whisper(self, WhisperModel):
         try:
             self.whisper = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8",
-                                        download_root=str(WHISPER_DIR))
+                                        download_root=str(WHISPER_DIR), local_files_only=downloaded(WHISPER_MODEL))
             log.info("whisper cargado")
         except Exception:
             log.exception("no se pudo cargar whisper")
@@ -647,6 +653,9 @@ def main():
         ctypes.windll.shcore.SetProcessDpiAwareness(1)
     except (AttributeError, OSError):
         pass
+
+    global LOG_HEARD
+    LOG_HEARD = load_settings().get("registrar_lo_oido", False)
 
     ui = queue.Queue()
     engine = Engine(ui)
