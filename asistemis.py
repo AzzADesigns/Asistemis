@@ -1,15 +1,18 @@
 ﻿"""Asistemis: anotador por voz, gratis y local, que también pasa órdenes a Claude.
 
-- "Asistemis, anota <lo que sea>... eso es todo": la nota se guarda con fecha y hora
-  en notas-asistemis.txt, en el escritorio.
-- "Asistemis, abrime Chrome": abre la aplicación.
-- "Asistemis, ejecuta <orden>... eso es todo": se la pasa a Claude (panel "Claude").
-La grabación termina con "eso es todo", "eso sería todo" o 15 s de silencio.
-Ctrl+Alt+N empieza/termina sin decir la palabra de activación; Ctrl+Alt+C abre el panel.
+Se activa con Ctrl+Alt+N (pensado para asignarlo a un botón del mouse): una pulsación
+abre el micrófono, otra termina. En reposo el micrófono está cerrado y el modelo sale
+de la GPU tras 2 min sin uso. Opcional (icono de la bandeja): escuchar «Asistemis» siempre.
+
+- "anota <lo que sea>": la nota se guarda con fecha y hora en notas-asistemis.txt (escritorio).
+- "abrime Chrome": abre la aplicación.      - "busca <algo>": lo busca en el navegador.
+- "ejecuta <orden>": se la pasa a Claude (panel "Claude", Ctrl+Alt+C).
+Sin el botón, la grabación termina con "eso es todo", "eso sería todo" o 15 s de silencio.
 """
 
 import ctypes
 import glob
+import json
 import logging
 import os
 import queue
@@ -22,6 +25,7 @@ import time
 import tkinter as tk
 import wave
 from collections import deque
+from ctypes import wintypes
 from difflib import SequenceMatcher
 from pathlib import Path
 
@@ -29,7 +33,6 @@ import numpy as np
 import pystray
 import sounddevice as sd
 from PIL import Image, ImageDraw
-from pynput import keyboard
 
 from herramientas import NOTES_FILE, fold, installed_apps, open_app, save_note, web_search
 from ordenes import Panel
@@ -48,15 +51,17 @@ CHECK_EVERY = 10           # bloques (1 s) entre escuchas de la palabra de activ
 CHECK_EVERY_GPU = 5        # con la tarjeta gráfica se puede escuchar cada 0,5 s
 CHECK_WINDOW = 30          # bloques (3 s) que se escuchan cada vez
 SPEECH_LEVEL = 0.3         # volumen mínimo (0-1) para considerar que alguien habla
-HOTKEY = "<ctrl>+<alt>+n"
-PANEL_HOTKEY = "<ctrl>+<alt>+c"
+HOTKEY = "N"               # Ctrl+Alt+N: empieza / termina (asígnalo a un botón del mouse)
+PANEL_HOTKEY = "C"         # Ctrl+Alt+C: panel de Claude
 WHISPER_MODEL = "large-v3-turbo"  # transcribe la nota (small se equivoca mucho con el micro del JBL)
 LISTEN_MODEL = "base"      # sin tarjeta gráfica: más rápido, para escuchar continuamente
 LOG_HEARD = True           # True: registra en el log lo que oye (para ajustar la activación)
+GPU_IDLE_UNLOAD = 120      # s sin usarse tras los que el modelo deja la tarjeta gráfica (vuelve en ~0,7 s)
 
 BASE = Path(__file__).resolve().parent
 WHISPER_DIR = BASE / "models" / "whisper"
 LOG_FILE = BASE / "asistemis.log"
+SETTINGS_FILE = BASE / "ajustes.json"
 
 SR = 16000
 BLOCK = SR // 10           # 100 ms por bloque
@@ -156,6 +161,17 @@ def parse(text):
     return kind, body[:1].upper() + body[1:]
 
 
+def load_settings():
+    try:
+        return json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def save_settings(settings):
+    SETTINGS_FILE.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+
+
 def open_notes():
     NOTES_FILE.touch(exist_ok=True)
     subprocess.Popen(["notepad.exe", str(NOTES_FILE)])
@@ -198,6 +214,12 @@ class Engine(threading.Thread):
         self.check_every = CHECK_EVERY
         self.probing = threading.Event()   # hay una transcripción de pausa en curso
         self.probed_at = None              # momento de voz que ya se transcribió en una pausa
+        # sin "escuchar Asistemis", el micrófono solo se abre al pulsar el botón / Ctrl+Alt+N
+        self.wake_by_voice = load_settings().get("escuchar_asistemis", False)
+        self.stream = None
+        self.by_button = False
+        self.gpu_loaded = False
+        self.last_used = time.monotonic()
 
     def run(self):
         try:
@@ -209,9 +231,13 @@ class Engine(threading.Thread):
             log.exception("no se pudo iniciar")
             self.ui.put(("error", f"No se pudo iniciar: {e}"))
             return
-        self.ui.put(("ready",))
-        with stream:
+        self.stream = stream
+        if self.wake_by_voice:
+            stream.start()
+        self.ui.put(("ready", self.wake_by_voice))
+        try:  # sin "with": entrar en el bloque encendería el micrófono
             while self._handle_commands():
+                self._maybe_unload()
                 try:
                     block = self._to_16k(self.audio.get(timeout=0.2))
                 except queue.Empty:
@@ -230,7 +256,7 @@ class Engine(threading.Thread):
                         self.last_voice = now
                     self._maybe_check(self.chunks, "stop")
                     silent = now - self.last_voice
-                    if silent >= COMMAND_SILENCE and self.probed_at != self.last_voice:
+                    if silent >= COMMAND_SILENCE and self.probed_at != self.last_voice and not self.by_button:
                         self._probe()
                     if silent > SILENCE_SECONDS:
                         log.info("silencio: nota cerrada")
@@ -238,12 +264,16 @@ class Engine(threading.Thread):
                     elif now - self.started > MAX_SECONDS:
                         log.info("tiempo máximo alcanzado")
                         self._finish()
+        finally:
+            stream.close()
 
     def _maybe_check(self, blocks, kind):
         """Cada segundo, si alguien habla, escucha los últimos 3 s en segundo plano.
         Para el final basta con que se haya hablado en esos 3 s: "eso es todo" suele
         decirse bajando la voz, justo antes de callarse."""
         if self.blocks_seen % self.check_every or self.checking.is_set():
+            return
+        if self.gpu and not self.whisper_ready.is_set():  # el modelo está volviendo a la GPU
             return
         window = blocks[-CHECK_WINDOW:]
         recent = window if kind == "stop" else window[-self.check_every:]
@@ -348,11 +378,15 @@ class Engine(threading.Thread):
                     self.opening = self._is_opening(self.heard)
             elif cmd == "quit":
                 return False
+            elif cmd == "wake_by_voice":
+                self._set_wake_by_voice(not self.wake_by_voice)
             elif cmd == "wake" and self.state == self.IDLE:
                 log.info("palabra de activación detectada")
                 self._start(list(self.preroll), [self.last_heard])
             elif cmd == "toggle" and self.state == self.IDLE:
-                self._start([], [])
+                log.info("grabación iniciada con el botón")
+                self._mic(True)
+                self._start([], [], by_button=True)
             elif cmd in ("toggle", "finish", "stop") and self.state == self.RECORDING:
                 self._finish()
             elif cmd == "cancel" and self.state == self.RECORDING:
@@ -361,7 +395,9 @@ class Engine(threading.Thread):
             elif cmd == "done":
                 self._idle()
 
-    def _start(self, preroll, heard):
+    def _start(self, preroll, heard, by_button=False):
+        self._ensure_gpu()
+        self.by_button = by_button  # con el botón, termina la segunda pulsación (no una pausa)
         self.state = self.RECORDING
         self.generation += 1
         self.chunks = preroll
@@ -401,6 +437,57 @@ class Engine(threading.Thread):
         self.preroll.clear()
         self.generation += 1
         self.state = self.IDLE
+        self.last_used = time.monotonic()
+        self.by_button = False
+        if not self.wake_by_voice:
+            self._mic(False)
+
+    def _mic(self, on):
+        """Abre o cierra el micrófono (cerrado, Windows ni siquiera lo marca como en uso)."""
+        if not self.stream or self.stream.active == on:
+            return
+        if on:
+            while not self.audio.empty():  # descarta audio viejo
+                self.audio.get_nowait()
+            self.stream.start()
+        else:
+            self.stream.stop()
+
+    def _set_wake_by_voice(self, on):
+        self.wake_by_voice = on
+        save_settings({**load_settings(), "escuchar_asistemis": on})
+        log.info("escuchar «Asistemis»: %s", on)
+        if on:
+            self._ensure_gpu()
+            self._mic(True)
+        elif self.state == self.IDLE:
+            self._mic(False)
+        self.ui.put(("mode", on))
+
+    def _ensure_gpu(self):
+        """Devuelve el modelo a la tarjeta gráfica (~0,7 s, mientras se empieza a hablar)."""
+        if self.gpu and not self.gpu_loaded:
+            self.gpu_loaded = True
+            threading.Thread(target=self._gpu_load, daemon=True).start()
+
+    def _gpu_load(self):
+        try:
+            self.whisper.model.load_model()
+            log.info("modelo de vuelta en la GPU")
+        except Exception:
+            log.exception("no se pudo volver a cargar el modelo")
+        finally:
+            self.whisper_ready.set()
+
+    def _maybe_unload(self):
+        """Sin uso durante un rato (y sin escuchar "Asistemis"), libera la memoria de la GPU."""
+        if (self.gpu and self.gpu_loaded and not self.wake_by_voice and self.state == self.IDLE
+                and self.whisper_ready.is_set() and not self.checking.is_set() and not self.probing.is_set()
+                and time.monotonic() - self.last_used > GPU_IDLE_UNLOAD):
+            self.whisper_ready.clear()
+            self.whisper.model.unload_model(to_cpu=True)  # queda en la RAM: vuelve rápido
+            self.gpu_loaded = False
+            log.info("modelo fuera de la GPU (sin uso)")
 
     def _load_models(self):
         """Con tarjeta NVIDIA, un solo modelo "turbo" en la GPU escucha y transcribe (~0,3 s).
@@ -416,7 +503,7 @@ class Engine(threading.Thread):
                                      download_root=str(WHISPER_DIR))
                 model.transcribe(np.zeros(SR, np.float32), language="es")  # calienta la GPU
                 self.listener = self.whisper = model
-                self.gpu, self.check_every = True, CHECK_EVERY_GPU
+                self.gpu, self.check_every, self.gpu_loaded = True, CHECK_EVERY_GPU, True
                 self.whisper_ready.set()
                 log.info("whisper cargado en la GPU")
                 return
@@ -593,13 +680,16 @@ class Widget:
             if msg == "level":
                 self.levels.append(args[0])
                 redraw = True
-            elif msg == "ready":
-                self.set("Listo. Di «Asistemis, anota… / abrime… / busca… / ejecuta…»", GREEN)
-                self._hide_after(3000)
+            elif msg in ("ready", "mode"):
+                if args[0]:
+                    self.set("Escuchando «Asistemis»: di «Asistemis, anota… / abrime… / ejecuta…»", GREEN)
+                else:
+                    self.set("Micrófono apagado. Pulsa el botón (Ctrl+Alt+N) y habla", GREEN)
+                self._hide_after(3500)
             elif msg == "listening":
                 self.levels.extend([0.0] * BARS)
                 redraw = True
-                self.set("Escuchando… di «eso es todo» para terminar", RED, buttons=True)
+                self.set("Escuchando… pulsa otra vez para terminar", RED, buttons=True)
                 self._show()
             elif msg == "transcribing":
                 self.levels.extend([0.0] * BARS)
@@ -635,6 +725,37 @@ class Widget:
         if redraw:
             self._draw()
         self.root.after(40, self._poll)
+
+
+# --- Atajos -----------------------------------------------------------------
+
+class Hotkeys(threading.Thread):
+    """Atajos Ctrl+Alt+<tecla> registrados en Windows. A diferencia de pynput, también
+    reciben las teclas que envía otro programa (p. ej. un botón del mouse en Logi Options+)."""
+
+    MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, WM_HOTKEY, WM_QUIT = 0x1, 0x2, 0x4000, 0x0312, 0x0012
+
+    def __init__(self, bindings):
+        super().__init__(daemon=True)
+        self.bindings = list(bindings.items())  # [(tecla, función)]
+        self.thread_id = None
+
+    def run(self):
+        user32 = ctypes.windll.user32
+        self.thread_id = ctypes.windll.kernel32.GetCurrentThreadId()
+        for i, (key, _) in enumerate(self.bindings, 1):
+            if not user32.RegisterHotKey(None, i, self.MOD_CONTROL | self.MOD_ALT | self.MOD_NOREPEAT, ord(key)):
+                log.error("Ctrl+Alt+%s ya lo usa otro programa", key)
+        msg = wintypes.MSG()
+        while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+            if msg.message == self.WM_HOTKEY and 1 <= msg.wParam <= len(self.bindings):
+                self.bindings[msg.wParam - 1][1]()
+        for i in range(1, len(self.bindings) + 1):
+            user32.UnregisterHotKey(None, i)
+
+    def stop(self):
+        if self.thread_id:
+            ctypes.windll.user32.PostThreadMessageW(self.thread_id, self.WM_QUIT, 0, 0)
 
 
 # --- Arranque ---------------------------------------------------------------
@@ -681,12 +802,14 @@ def main():
     tray = pystray.Icon("asistemis", tray_image(), "Asistemis", menu=pystray.Menu(
         pystray.MenuItem("Anotar ahora (Ctrl+Alt+N)", lambda: engine.commands.put("toggle"), default=True),
         pystray.MenuItem("Claude (Ctrl+Alt+C)", lambda: ui.put(("panel",))),
+        pystray.MenuItem("Escuchar «Asistemis» siempre", lambda: engine.commands.put("wake_by_voice"),
+                         checked=lambda item: engine.wake_by_voice),
         pystray.MenuItem("Abrir notas", open_notes),
         pystray.MenuItem("Salir", quit_app),
     ))
     tray.run_detached()
-    hotkeys = keyboard.GlobalHotKeys({HOTKEY: lambda: engine.commands.put("toggle"),
-                                      PANEL_HOTKEY: lambda: ui.put(("panel",))})
+    hotkeys = Hotkeys({HOTKEY: lambda: engine.commands.put("toggle"),
+                       PANEL_HOTKEY: lambda: ui.put(("panel",))})
     hotkeys.start()
     engine.start()
     log.info("Asistemis iniciado")
