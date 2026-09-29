@@ -20,6 +20,7 @@ ALLOWED_TOOLS = ["Read", "Glob", "Grep", "WebSearch", "WebFetch",
                  "Bash(./abrir.cmd *)", "Bash(./anotar.cmd *)",
                  "PowerShell(./abrir.cmd *)", "PowerShell(./anotar.cmd *)",
                  r"PowerShell(.\abrir.cmd *)", r"PowerShell(.\anotar.cmd *)"]
+BUILTIN_TOOLS = ["Read", "Glob", "Grep", "WebSearch", "WebFetch", "Bash", "PowerShell"]
 TIMEOUT = 600  # s
 ERROR_LOG = Path(__file__).resolve().parent / "claude-errores.log"
 
@@ -46,7 +47,10 @@ class ClaudeSession:
         if not exe:
             raise RuntimeError("No encontré Claude Code (el comando «claude»).")
         cmd = [exe, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
-               "--permission-mode", "dontAsk", "--effort", "low", "--allowedTools", *ALLOWED_TOOLS]
+               "--permission-mode", "dontAsk", "--effort", "low", "--allowedTools", *ALLOWED_TOOLS,
+               # solo las herramientas que usa, sin conectores ni skills: la base que Claude relee en cada
+               # orden baja de ~27.000 a ~12.500 tokens y queda fija en la caché (cada orden ~30 veces más barata)
+               "--tools", *BUILTIN_TOOLS, "--strict-mcp-config", "--disable-slash-commands"]
         if self.session:
             cmd += ["--resume", self.session]
         errors = open(ERROR_LOG, "a", encoding="utf-8")
@@ -197,6 +201,8 @@ class ClaudeChat:
         elif kind == "answer":
             text, is_error = args
             self._js("addMessage", "error" if is_error else "claude", text.strip())
+            # cada orden es un chat nuevo: la siguiente no relee esta conversación
+            self._claude.reset()
             self._js("setStatus", "Error" if is_error else "Listo", "error" if is_error else "ok")
             with self._lock:
                 self._busy = False

@@ -33,7 +33,7 @@ import pystray
 import sounddevice as sd
 from PIL import Image, ImageDraw
 
-from herramientas import NOTES_FILE, fold, installed_apps, open_app, save_note, web_search
+from herramientas import HOTWORDS, NOTES_FILE, fold, installed_apps, open_app, save_note, web_search
 from interfaz import Interface
 from ordenes import ClaudeChat
 
@@ -312,7 +312,7 @@ class Engine(threading.Thread):
     def _probe_run(self, audio, generation, voice_at):
         try:
             self.whisper_ready.wait()
-            segments, _ = self.whisper.transcribe(audio, language="es", beam_size=5, vad_filter=True,
+            segments, _ = self.whisper.transcribe(audio, language="es", beam_size=5, vad_filter=True, hotwords=HOTWORDS,
                                                   without_timestamps=True)
             text = "".join(s.text for s in segments).strip()
             if LOG_HEARD:
@@ -533,7 +533,7 @@ class Engine(threading.Thread):
             self.whisper_ready.wait()
             if self.whisper is None:
                 raise RuntimeError("no se pudo cargar Whisper")
-            segments, _ = self.whisper.transcribe(audio, language="es", beam_size=5, vad_filter=True,
+            segments, _ = self.whisper.transcribe(audio, language="es", beam_size=5, vad_filter=True, hotwords=HOTWORDS,
                                                   without_timestamps=True)
             text = "".join(s.text for s in segments).strip()
             if LOG_HEARD:

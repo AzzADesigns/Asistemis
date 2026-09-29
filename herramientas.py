@@ -69,6 +69,15 @@ ALIASES = {
     "bloc de notas": "Bloc de notas", "notepad": "Bloc de notas",
 }
 
+# cómo lo transcribe Whisper a veces ("abrime el IDE de Antigravity", "abrime estim", "Spoon")
+ALIAS_PATTERNS = [
+    (re.compile(r"anti\s*-?\s*gra|gravit"), "Antigravity IDE"),  # siempre el IDE, nunca el otro "Antigravity"
+    (re.compile(r"\b(?:steam|e?st[ie]{1,2}[mn]|stim|spoon)\b"), "Steam"),
+]
+
+# nombres que se le dan a Whisper como pista para que los escriba bien
+HOTWORDS = "Asistemis, abrime Steam, Antigravity IDE, Figma, Discord, Chrome, YouTube Music, Spotify."
+
 FILLER = re.compile(r"^(?:el|la|los|las|un|una|mi|me|al|a|por favor|porfa)\s+|\s+(?:por favor|porfa)$")
 
 _apps, _apps_time = [], 0.0
@@ -108,6 +117,7 @@ def find_app(query):
     for _ in range(3):
         q = FILLER.sub("", q).strip()
     q = ALIASES.get(q, q)
+    q = next((app for pattern, app in ALIAS_PATTERNS if pattern.search(q)), q)
     apps = installed_apps()
     qk = _key(q)
     if not qk:
