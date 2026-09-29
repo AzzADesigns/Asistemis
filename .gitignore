@@ -8,3 +8,7 @@ asistemis.log
 ultima-nota.wav
 claude-errores.log
 ajustes.json
+
+# Compilación (.exe)
+build/
+dist/

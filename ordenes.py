@@ -11,18 +11,16 @@ import logging
 import shutil
 import subprocess
 import threading
-from pathlib import Path
 
-from herramientas import NO_WINDOW, save_note
+from herramientas import APP_DIR, DATA_DIR, NO_WINDOW, save_note
 
-CLAUDE_DIR = Path(__file__).resolve().parent / "claude"
+CLAUDE_DIR = APP_DIR / "claude"
 ALLOWED_TOOLS = ["Read", "Glob", "Grep", "WebSearch", "WebFetch",
-                 "Bash(./abrir.cmd *)", "Bash(./anotar.cmd *)",
-                 "PowerShell(./abrir.cmd *)", "PowerShell(./anotar.cmd *)",
-                 r"PowerShell(.\abrir.cmd *)", r"PowerShell(.\anotar.cmd *)"]
+                 *(f"{shell}({prefix}{cmd}.cmd *)" for cmd in ("abrir", "cerrar", "anotar")
+                   for shell, prefix in (("Bash", "./"), ("PowerShell", "./"), ("PowerShell", ".\\")))]
 BUILTIN_TOOLS = ["Read", "Glob", "Grep", "WebSearch", "WebFetch", "Bash", "PowerShell"]
 TIMEOUT = 600  # s
-ERROR_LOG = Path(__file__).resolve().parent / "claude-errores.log"
+ERROR_LOG = DATA_DIR / "claude-errores.log"
 
 # qué se ve mientras Claude usa cada herramienta
 TOOL_LABELS = {"Read": "Leyendo…", "Glob": "Buscando archivos…", "Grep": "Buscando…",

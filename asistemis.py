@@ -34,8 +34,8 @@ import pystray
 import sounddevice as sd
 from PIL import Image, ImageDraw
 
-from herramientas import (HOTWORDS, NOTES_FILE, close_app, fold, installed_apps, open_app, save_note,
-                          web_search)
+from herramientas import (APP_DIR, DATA_DIR, FROZEN, HOTWORDS, NOTES_FILE, close_app, fold, installed_apps,
+                          open_app, save_note, web_search)
 from interfaz import Interface
 from ordenes import ClaudeChat
 
@@ -60,10 +60,9 @@ LISTEN_MODEL = "base"      # sin tarjeta gráfica: más rápido, para escuchar c
 LOG_HEARD = False          # se lee de ajustes.json ("registrar_lo_oido"): guarda en el log lo que oye
                            # y el audio de la última nota; útil para ajustar la activación, no por privacidad
 
-BASE = Path(__file__).resolve().parent
-WHISPER_DIR = BASE / "models" / "whisper"
-LOG_FILE = BASE / "asistemis.log"
-SETTINGS_FILE = BASE / "ajustes.json"
+WHISPER_DIR = DATA_DIR / "models" / "whisper"
+LOG_FILE = DATA_DIR / "asistemis.log"
+SETTINGS_FILE = DATA_DIR / "ajustes.json"
 
 SR = 16000
 BLOCK = SR // 10           # 100 ms por bloque
@@ -501,7 +500,8 @@ class Engine(threading.Thread):
     def _load_models(self):
         """Con tarjeta NVIDIA, un solo modelo "turbo" en la GPU escucha y transcribe (~0,3 s).
         Sin ella, "base" escucha en la CPU y "turbo" se carga aparte para las notas (~7 s)."""
-        for d in glob.glob(os.path.join(sys.prefix, "Lib", "site-packages", "nvidia", "*", "bin")):
+        nvidia = APP_DIR / "nvidia" if FROZEN else Path(sys.prefix) / "Lib" / "site-packages" / "nvidia"
+        for d in glob.glob(str(nvidia / "*" / "bin")):
             os.add_dll_directory(d)  # cuBLAS / cuDNN instalados con pip
             os.environ["PATH"] = d + os.pathsep + os.environ["PATH"]
         import ctranslate2
@@ -534,7 +534,7 @@ class Engine(threading.Thread):
 
     def _transcribe(self, audio):
         if LOG_HEARD:
-            with wave.open(str(BASE / "ultima-nota.wav"), "wb") as f:
+            with wave.open(str(DATA_DIR / "ultima-nota.wav"), "wb") as f:
                 f.setnchannels(1)
                 f.setsampwidth(2)
                 f.setframerate(SR)
@@ -635,16 +635,22 @@ class Hotkeys(threading.Thread):
 # --- Arranque ---------------------------------------------------------------
 
 def tray_image():
-    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    d.ellipse((2, 2, 62, 62), fill=(79, 140, 255))
-    for i, bh in enumerate((14, 26, 36, 26, 14)):
-        x = 16 + i * 7
-        d.rounded_rectangle((x, 32 - bh / 2, x + 4, 32 + bh / 2), radius=2, fill="white")
-    return img
+    try:
+        return Image.open(APP_DIR / "recursos" / "asistemis.png").resize((64, 64), Image.LANCZOS)
+    except OSError:  # sin el icono: un círculo con barras de sonido
+        img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        d.ellipse((2, 2, 62, 62), fill=(20, 21, 26))
+        for i, bh in enumerate((14, 26, 36, 26, 14)):
+            x = 16 + i * 7
+            d.rounded_rectangle((x, 32 - bh / 2, x + 4, 32 + bh / 2), radius=2, fill="white")
+        return img
 
 
 def main():
+    # empaquetado como .exe sin consola no hay stdout/stderr: la barra de descarga de los modelos fallaría
+    if sys.stdout is None or sys.stderr is None:
+        sys.stdout = sys.stderr = open(os.devnull, "w", encoding="utf-8")
     logging.basicConfig(filename=LOG_FILE, level=logging.INFO, encoding="utf-8",
                         format="%(asctime)s %(levelname)s %(message)s")
 
@@ -701,7 +707,8 @@ def main():
         # la interfaz se cerró sola: mejor reiniciar Asistemis entero que dejarlo a medias
         log.error("la interfaz se cerró inesperadamente; reiniciando Asistemis")
         lock.close()
-        subprocess.Popen([sys.executable, str(Path(__file__).resolve())], cwd=str(BASE))
+        subprocess.Popen([sys.executable] if FROZEN else [sys.executable, str(Path(__file__).resolve())],
+                         cwd=str(APP_DIR))
     logging.shutdown()
     os._exit(0)  # sin esperar a hilos que quedaron bloqueados
 

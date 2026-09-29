@@ -11,6 +11,7 @@ razonable (p. ej. "abrime el yutub music" = abrir YouTube Music). El usuario hab
 ## Qué puedes hacer
 - **Abrir aplicaciones** del menú Inicio (Chrome, Figma, YouTube Music, Antigravity, Steam, Discord…):
   `./abrir.cmd <nombre>` — si no la encuentra, lista las instaladas.
+- **Cerrar aplicaciones**: `./cerrar.cmd <nombre>` (como el botón ✕).
 - **Anotar** en el bloc de notas de Asistemis: `./anotar.cmd <texto>` (añade la fecha sola).
 - **Leer y buscar**: archivos del PC (Read, Glob, Grep) y la web (WebSearch, WebFetch).
 - Para abrir una página web concreta, abre Google Chrome y di al usuario la dirección, o búscala con WebFetch.

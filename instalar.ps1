@@ -52,7 +52,8 @@ if ($gpu) {
 if (-not $SinDescargarModelos) {
     Paso 'Descargando los modelos de voz (~1,6 GB, solo la primera vez)'
     $modelos = if ($gpu) { "'large-v3-turbo'" } else { "'large-v3-turbo', 'base'" }
-    & $py -c "from faster_whisper import download_model; [download_model(m, cache_dir='models/whisper') for m in ($modelos,)]"
+    $cache = (Join-Path $env:LOCALAPPDATA 'Asistemis\models\whisper').Replace('\', '/')
+    & $py -c "from faster_whisper import download_model; [download_model(m, cache_dir='$cache') for m in ($modelos,)]"
     if ($LASTEXITCODE -ne 0) { Write-Host 'No se pudieron descargar; se descargarán al abrir Asistemis.' -ForegroundColor Yellow }
 }
 

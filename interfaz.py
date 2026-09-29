@@ -17,13 +17,14 @@ import queue
 import threading
 import time
 from ctypes import wintypes
-from pathlib import Path
 
 import webview
 
+from herramientas import APP_DIR
+
 log = logging.getLogger("asistemis")
 
-UI_DIR = Path(__file__).resolve().parent / "ui"
+UI_DIR = APP_DIR / "ui"
 # copia propia de user32: los tipos que se declaran abajo no afectan a pywebview (que usa windll.user32)
 user32, dwmapi = ctypes.WinDLL("user32"), ctypes.windll.dwmapi
 

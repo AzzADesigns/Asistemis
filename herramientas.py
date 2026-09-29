@@ -26,6 +26,13 @@ from urllib.parse import quote_plus
 
 NO_WINDOW = 0x08000000  # CREATE_NO_WINDOW
 
+# El programa (código, ui/, claude/) puede estar en cualquier carpeta, también empaquetado como .exe;
+# los datos del usuario (modelos de voz, ajustes, registro) van siempre a %LOCALAPPDATA%\Asistemis.
+FROZEN = getattr(sys, "frozen", False)
+APP_DIR = Path(sys.executable).parent if FROZEN else Path(__file__).resolve().parent
+DATA_DIR = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "Asistemis"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
 
 def desktop_dir():
     try:

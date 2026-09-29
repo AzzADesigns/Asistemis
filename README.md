@@ -86,6 +86,9 @@ anotar, pero **no** borrar, modificar ni instalar nada (ver `claude/CLAUDE.md`).
 
 ## Personalizar
 
+Tus datos (modelos de voz, ajustes y registro) están en **`%LOCALAPPDATA%\Asistemis`**
+(`Win+R` → `%LOCALAPPDATA%\Asistemis`), separados del programa.
+
 - **Ajustes** (`ajustes.json`, se crea solo):
   - `"encendido"`: cómo arranca (recuerda el último estado).
   - `"registrar_lo_oido"`: `true` guarda en `asistemis.log` lo que oye y el audio de la última nota
@@ -107,9 +110,24 @@ anotar, pero **no** borrar, modificar ni instalar nada (ver `claude/CLAUDE.md`).
 
 ## Desinstalar
 
-Icono junto al reloj → *Salir*, borra la carpeta de Asistemis y los accesos directos
-`Asistemis.lnk` del menú Inicio y de la carpeta de inicio (`Win+R` → `shell:startup`). Tus notas
-quedan en el escritorio.
+Icono junto al reloj → *Salir*. Después borra:
+- la carpeta del programa (la del repositorio, o `%LOCALAPPDATA%\Programs\Asistemis` si instalaste el .exe),
+- tus datos y modelos de voz: `%LOCALAPPDATA%\Asistemis`,
+- los accesos directos `Asistemis.lnk` del menú Inicio y de la carpeta de inicio (`Win+R` → `shell:startup`).
+
+Tus notas quedan en el escritorio.
+
+## Compilar como .exe
+
+```
+powershell -ExecutionPolicy Bypass -File compilar.ps1            # crea dist\Asistemis\Asistemis.exe
+powershell -ExecutionPolicy Bypass -File compilar.ps1 -Instalar  # y lo instala en %LOCALAPPDATA%\Programs\Asistemis
+```
+
+Requiere haber ejecutado antes `instalar.cmd`. El resultado es una carpeta con `Asistemis.exe` (con su
+icono; en el Administrador de tareas aparece como «Asistemis») y `herramientas.exe` (la usa Claude). No
+necesita Python para funcionar. Pesa ~2,3 GB con las librerías de NVIDIA; los modelos de voz se
+descargan aparte la primera vez.
 
 ## Cómo está hecho
 
@@ -120,3 +138,5 @@ quedan en el escritorio.
 | `ordenes.py` | Conexión con Claude Code (`claude -p`) |
 | `interfaz.py`, `ui/` | Interfaz en HTML/CSS (pywebview + cristal de Windows 11) |
 | `claude/` | Carpeta de trabajo de Claude: instrucciones y comandos permitidos |
+| `recursos/` | Icono y datos de versión del .exe |
+| `asistemis.spec`, `compilar.ps1` | Receta y script para compilar el .exe (PyInstaller) |
