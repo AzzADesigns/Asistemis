@@ -1,13 +1,13 @@
 ﻿"""Asistemis: anotador por voz, gratis y local, que también pasa órdenes a Claude.
 
-Se activa con Ctrl+Alt+N (pensado para asignarlo a un botón del mouse): una pulsación
-abre el micrófono, otra termina. En reposo el micrófono está cerrado y el modelo sale
-de la GPU tras 2 min sin uso. Opcional (icono de la bandeja): escuchar «Asistemis» siempre.
+Ctrl+Alt+N (pensado para un botón del mouse) lo enciende y lo apaga:
+- Encendido: escucha siempre "Asistemis…" y hace lo que se le pide.
+- Apagado: micrófono cerrado y modelo fuera de la GPU; no consume nada.
 
-- "anota <lo que sea>": la nota se guarda con fecha y hora en notas-asistemis.txt (escritorio).
-- "abrime Chrome": abre la aplicación.      - "busca <algo>": lo busca en el navegador.
-- "ejecuta <orden>": se la pasa a Claude (panel "Claude", Ctrl+Alt+C).
-Sin el botón, la grabación termina con "eso es todo", "eso sería todo" o 15 s de silencio.
+- "Asistemis, anota <lo que sea>… eso es todo": nota con fecha en notas-asistemis.txt (escritorio).
+- "Asistemis, abrime Chrome" / "busca <algo>" / "ejecuta <orden>": se hace en cuanto hay una
+  pausa (abrir la app, buscar en el navegador, o pasárselo a Claude: panel con Ctrl+Alt+C).
+Las notas terminan con "eso es todo", "eso sería todo" o 15 s de silencio.
 """
 
 import ctypes
@@ -51,12 +51,11 @@ CHECK_EVERY = 10           # bloques (1 s) entre escuchas de la palabra de activ
 CHECK_EVERY_GPU = 5        # con la tarjeta gráfica se puede escuchar cada 0,5 s
 CHECK_WINDOW = 30          # bloques (3 s) que se escuchan cada vez
 SPEECH_LEVEL = 0.3         # volumen mínimo (0-1) para considerar que alguien habla
-HOTKEY = "N"               # Ctrl+Alt+N: empieza / termina (asígnalo a un botón del mouse)
+HOTKEY = "N"               # Ctrl+Alt+N: enciende / apaga Asistemis (asígnalo a un botón del mouse)
 PANEL_HOTKEY = "C"         # Ctrl+Alt+C: panel de Claude
 WHISPER_MODEL = "large-v3-turbo"  # transcribe la nota (small se equivoca mucho con el micro del JBL)
 LISTEN_MODEL = "base"      # sin tarjeta gráfica: más rápido, para escuchar continuamente
 LOG_HEARD = True           # True: registra en el log lo que oye (para ajustar la activación)
-GPU_IDLE_UNLOAD = 120      # s sin usarse tras los que el modelo deja la tarjeta gráfica (vuelve en ~0,7 s)
 
 BASE = Path(__file__).resolve().parent
 WHISPER_DIR = BASE / "models" / "whisper"
@@ -214,12 +213,11 @@ class Engine(threading.Thread):
         self.check_every = CHECK_EVERY
         self.probing = threading.Event()   # hay una transcripción de pausa en curso
         self.probed_at = None              # momento de voz que ya se transcribió en una pausa
-        # sin "escuchar Asistemis", el micrófono solo se abre al pulsar el botón / Ctrl+Alt+N
-        self.wake_by_voice = load_settings().get("escuchar_asistemis", False)
+        # encendido: escucha "Asistemis"; apagado: micrófono cerrado y GPU libre
+        self.wake_by_voice = load_settings().get("encendido", True)
         self.stream = None
         self.by_button = False
         self.gpu_loaded = False
-        self.last_used = time.monotonic()
 
     def run(self):
         try:
@@ -378,13 +376,13 @@ class Engine(threading.Thread):
                     self.opening = self._is_opening(self.heard)
             elif cmd == "quit":
                 return False
-            elif cmd == "wake_by_voice":
+            elif cmd == "power":
                 self._set_wake_by_voice(not self.wake_by_voice)
             elif cmd == "wake" and self.state == self.IDLE:
                 log.info("palabra de activación detectada")
                 self._start(list(self.preroll), [self.last_heard])
             elif cmd == "toggle" and self.state == self.IDLE:
-                log.info("grabación iniciada con el botón")
+                log.info("grabación iniciada a mano")
                 self._mic(True)
                 self._start([], [], by_button=True)
             elif cmd in ("toggle", "finish", "stop") and self.state == self.RECORDING:
@@ -437,7 +435,6 @@ class Engine(threading.Thread):
         self.preroll.clear()
         self.generation += 1
         self.state = self.IDLE
-        self.last_used = time.monotonic()
         self.by_button = False
         if not self.wake_by_voice:
             self._mic(False)
@@ -455,13 +452,16 @@ class Engine(threading.Thread):
 
     def _set_wake_by_voice(self, on):
         self.wake_by_voice = on
-        save_settings({**load_settings(), "escuchar_asistemis": on})
-        log.info("escuchar «Asistemis»: %s", on)
+        save_settings({**load_settings(), "encendido": on})
+        log.info("Asistemis %s", "encendido" if on else "apagado")
         if on:
             self._ensure_gpu()
             self._mic(True)
-        elif self.state == self.IDLE:
-            self._mic(False)
+        else:
+            if self.state == self.RECORDING:  # apagar corta lo que se estaba grabando
+                self._idle()
+            elif self.state == self.IDLE:
+                self._mic(False)
         self.ui.put(("mode", on))
 
     def _ensure_gpu(self):
@@ -480,14 +480,13 @@ class Engine(threading.Thread):
             self.whisper_ready.set()
 
     def _maybe_unload(self):
-        """Sin uso durante un rato (y sin escuchar "Asistemis"), libera la memoria de la GPU."""
+        """Apagado, libera la memoria de la GPU en cuanto nada está usando el modelo."""
         if (self.gpu and self.gpu_loaded and not self.wake_by_voice and self.state == self.IDLE
-                and self.whisper_ready.is_set() and not self.checking.is_set() and not self.probing.is_set()
-                and time.monotonic() - self.last_used > GPU_IDLE_UNLOAD):
+                and self.whisper_ready.is_set() and not self.checking.is_set() and not self.probing.is_set()):
             self.whisper_ready.clear()
             self.whisper.model.unload_model(to_cpu=True)  # queda en la RAM: vuelve rápido
             self.gpu_loaded = False
-            log.info("modelo fuera de la GPU (sin uso)")
+            log.info("modelo fuera de la GPU")
 
     def _load_models(self):
         """Con tarjeta NVIDIA, un solo modelo "turbo" en la GPU escucha y transcribe (~0,3 s).
@@ -682,14 +681,14 @@ class Widget:
                 redraw = True
             elif msg in ("ready", "mode"):
                 if args[0]:
-                    self.set("Escuchando «Asistemis»: di «Asistemis, anota… / abrime… / ejecuta…»", GREEN)
+                    self.set("Encendido. Di «Asistemis, anota… / abrime… / busca… / ejecuta…»", GREEN)
                 else:
-                    self.set("Micrófono apagado. Pulsa el botón (Ctrl+Alt+N) y habla", GREEN)
-                self._hide_after(3500)
+                    self.set("Apagado: no escucha ni consume nada. Ctrl+Alt+N para encender", MUTED)
+                self._hide_after(3000)
             elif msg == "listening":
                 self.levels.extend([0.0] * BARS)
                 redraw = True
-                self.set("Escuchando… pulsa otra vez para terminar", RED, buttons=True)
+                self.set("Escuchando… di «eso es todo» para terminar", RED, buttons=True)
                 self._show()
             elif msg == "transcribing":
                 self.levels.extend([0.0] * BARS)
@@ -800,15 +799,15 @@ def main():
         ui.put(("quit",))
 
     tray = pystray.Icon("asistemis", tray_image(), "Asistemis", menu=pystray.Menu(
-        pystray.MenuItem("Anotar ahora (Ctrl+Alt+N)", lambda: engine.commands.put("toggle"), default=True),
+        pystray.MenuItem("Encendido (Ctrl+Alt+N)", lambda: engine.commands.put("power"),
+                         checked=lambda item: engine.wake_by_voice, default=True),
+        pystray.MenuItem("Anotar ahora", lambda: engine.commands.put("toggle")),
         pystray.MenuItem("Claude (Ctrl+Alt+C)", lambda: ui.put(("panel",))),
-        pystray.MenuItem("Escuchar «Asistemis» siempre", lambda: engine.commands.put("wake_by_voice"),
-                         checked=lambda item: engine.wake_by_voice),
         pystray.MenuItem("Abrir notas", open_notes),
         pystray.MenuItem("Salir", quit_app),
     ))
     tray.run_detached()
-    hotkeys = Hotkeys({HOTKEY: lambda: engine.commands.put("toggle"),
+    hotkeys = Hotkeys({HOTKEY: lambda: engine.commands.put("power"),
                        PANEL_HOTKEY: lambda: ui.put(("panel",))})
     hotkeys.start()
     engine.start()
