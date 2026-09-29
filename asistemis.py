@@ -34,7 +34,8 @@ from pynput import keyboard
 WAKE_WORD = "asistemis"
 WAKE_THRESHOLD = 0.85      # parecido mínimo (0-1) para aceptar la palabra de activación
 WAKE_ALIASES = {"asisten"}  # cómo la oye a veces Whisper "base" (una nota vacía se descarta)
-STOP_PHRASE = "eso es todo"
+STOP_PHRASES = ("eso es todo", "eso seria todo")
+SILENCE_SECONDS = 15       # cierra la nota tras este silencio aunque no se oiga "eso es todo"
 MAX_SECONDS = 180          # corte de seguridad si no se oye "eso es todo"
 PREROLL_SECONDS = 4.0      # audio previo a la detección que se incluye en la nota
 CHECK_EVERY = 10           # bloques (1 s) entre escuchas de la palabra de activación / del final
@@ -90,10 +91,13 @@ def heard_wake(text):
     return any(is_wake("".join(w[i:i + n])) for i in range(len(w)) for n in (1, 2, 3))
 
 
+STOP_TARGETS = [p.replace(" ", "") for p in STOP_PHRASES]
+
+
 def heard_stop(text):
-    w, target = words(text), STOP_PHRASE.replace(" ", "")
+    w = words(text)
     return any(SequenceMatcher(None, "".join(w[i:i + n]), target).ratio() >= 0.85
-               for i in range(len(w)) for n in (2, 3, 4))
+               for target in STOP_TARGETS for i in range(len(w)) for n in (2, 3, 4))
 
 
 def similar(a, b):
@@ -104,10 +108,10 @@ def extract_note(text):
     """'Asistemis, anota hacer tarea 1, eso es todo.' -> 'Hacer tarea 1'
     Tolera lo que Whisper suele oír mal: 'Asistemi zanato', 'eso que es todo'."""
     tokens = list(re.finditer(r"[a-z0-9]+", fold(text)))  # misma longitud que text
-    stop_target = STOP_PHRASE.replace(" ", "")
-    # corta en la aparición más parecida a "eso es todo" (2-4 palabras)
+    # corta en la aparición más parecida a "eso es todo" / "eso sería todo" (2-4 palabras)
     end = len(text)
-    best = max(((similar("".join(t.group() for t in tokens[i:i + n]), stop_target), i)
+    best = max(((similar("".join(t.group() for t in tokens[i:i + n]), target), i)
+                for target in STOP_TARGETS
                 for i in range(len(tokens)) for n in (2, 3, 4) if i + n <= len(tokens)),
                key=lambda s: s[0], default=(0, 0))
     if best[0] >= 0.8:
@@ -130,7 +134,7 @@ def extract_note(text):
         if command:
             start = command.end()
     note = text[start:end].strip(" \t\n,.;:¡!¿?-—'\"")
-    note = re.sub(r"[\s,;]+y$", "", note, flags=re.I)  # "... y eso es todo"
+    note = re.sub(r"[\s,;.]+(?:y|y bueno|bueno)$", "", note, flags=re.I)  # "... y bueno, eso es todo"
     return note[:1].upper() + note[1:]
 
 
@@ -203,17 +207,26 @@ class Engine(threading.Thread):
                 elif self.state == self.RECORDING:
                     self.chunks.append(block)
                     self.ui.put(("level", level(block)))
+                    now = time.monotonic()
+                    if level(block) >= SPEECH_LEVEL:
+                        self.last_voice = now
                     self._maybe_check(self.chunks, "stop")
-                    if time.monotonic() - self.started > MAX_SECONDS:
+                    if now - self.last_voice > SILENCE_SECONDS:
+                        log.info("silencio: nota cerrada")
+                        self._finish()
+                    elif now - self.started > MAX_SECONDS:
                         log.info("tiempo máximo alcanzado")
                         self._finish()
 
     def _maybe_check(self, blocks, kind):
-        """Cada segundo, si alguien habla, escucha los últimos 3 s en segundo plano."""
+        """Cada segundo, si alguien habla, escucha los últimos 3 s en segundo plano.
+        Para el final basta con que se haya hablado en esos 3 s: "eso es todo" suele
+        decirse bajando la voz, justo antes de callarse."""
         if self.blocks_seen % CHECK_EVERY or self.checking.is_set():
             return
         window = blocks[-CHECK_WINDOW:]
-        if max(level(b) for b in window[-CHECK_EVERY:]) < SPEECH_LEVEL:
+        recent = window if kind == "stop" else window[-CHECK_EVERY:]
+        if max(level(b) for b in recent) < SPEECH_LEVEL:
             return
         self.checking.set()
         audio = np.concatenate(window).astype(np.float32) / 32768
@@ -221,7 +234,7 @@ class Engine(threading.Thread):
 
     def _check(self, audio, kind, generation):
         try:
-            prompt = "Asistemis." if kind == "wake" else None
+            prompt = "Asistemis." if kind == "wake" else "Y eso es todo."
             segments, _ = self.listener.transcribe(audio, language="es", beam_size=1, vad_filter=True,
                                                    initial_prompt=prompt, condition_on_previous_text=False)
             text = "".join(s.text for s in segments).strip()
@@ -292,7 +305,7 @@ class Engine(threading.Thread):
         self.state = self.RECORDING
         self.generation += 1
         self.chunks = preroll
-        self.started = time.monotonic()
+        self.started = self.last_voice = time.monotonic()
         self.ui.put(("listening",))
 
     def _finish(self):
