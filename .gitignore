@@ -1,0 +1,8 @@
+# Entorno y modelos (se regeneran: pip install -r requirements.txt / descarga de Whisper)
+.venv/
+models/
+__pycache__/
+
+# Datos privados (lo que oye el micro)
+asistemis.log
+ultima-nota.wav
