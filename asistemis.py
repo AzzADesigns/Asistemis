@@ -665,6 +665,14 @@ def main():
     chat.stop()
     hotkeys.stop()
     tray.stop()
+    import interfaz
+    if not interfaz.QUITTING.is_set():
+        # la interfaz se cerró sola: mejor reiniciar Asistemis entero que dejarlo a medias
+        log.error("la interfaz se cerró inesperadamente; reiniciando Asistemis")
+        lock.close()
+        subprocess.Popen([sys.executable, str(Path(__file__).resolve())], cwd=str(BASE))
+    logging.shutdown()
+    os._exit(0)  # sin esperar a hilos que quedaron bloqueados
 
 
 if __name__ == "__main__":

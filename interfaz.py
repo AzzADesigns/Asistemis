@@ -24,12 +24,14 @@ import webview
 log = logging.getLogger("asistemis")
 
 UI_DIR = Path(__file__).resolve().parent / "ui"
-user32, dwmapi = ctypes.windll.user32, ctypes.windll.dwmapi
+# copia propia de user32: los tipos que se declaran abajo no afectan a pywebview (que usa windll.user32)
+user32, dwmapi = ctypes.WinDLL("user32"), ctypes.windll.dwmapi
 
 # tamaños en píxeles CSS (se multiplican por la escala de Windows)
 SIZES = {"toast": (340, 72), "mic": (64, 64), "rec": (380, 168), "claude": (440, 640)}
 MARGIN = 16
 TOAST_SECONDS = 2.6
+QUITTING = threading.Event()  # solo con esto activo se dejan cerrar las ventanas
 GPU_EVERY = 1.0  # s entre lecturas del uso de la GPU (solo con la burbuja visible)
 
 HWND_TOPMOST = wintypes.HWND(-1)
@@ -87,6 +89,11 @@ class Glass:
             frameless=True, easy_drag=False, on_top=True, transparent=True, focus=focus,
             resizable=False, min_size=(10, 10), shadow=False)
         self.win.events.loaded += self._on_loaded
+        self.win.events.closing += self._on_closing
+
+    def _on_closing(self):
+        # Alt+F4 o similar no cierra nada: las ventanas solo se cierran con "Salir"
+        return QUITTING.is_set()
 
     def _on_loaded(self):
         if self.ready.is_set():
@@ -217,6 +224,7 @@ class Interface:
             if msg == "level":
                 levels.append(args[0])
             elif msg == "quit":
+                QUITTING.set()
                 for g in (self.toast, self.mic, self.rec, self.claude):
                     g.win.destroy()
                 return
