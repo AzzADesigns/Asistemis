@@ -12,12 +12,15 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 import unicodedata
 import winreg
+import webbrowser
 from datetime import datetime
 from difflib import SequenceMatcher
 from pathlib import Path
+from urllib.parse import quote_plus
 
 NO_WINDOW = 0x08000000  # CREATE_NO_WINDOW
 
@@ -69,12 +72,12 @@ ALIASES = {
 FILLER = re.compile(r"^(?:el|la|los|las|un|una|mi|me|al|a|por favor|porfa)\s+|\s+(?:por favor|porfa)$")
 
 _apps, _apps_time = [], 0.0
+_refreshing = threading.Lock()
 
 
-def installed_apps():
-    """[(nombre, AppID)] del menú Inicio, sin las bloqueadas. Se refresca cada 10 min."""
+def _load_apps():
     global _apps, _apps_time
-    if not _apps or time.monotonic() - _apps_time > 600:
+    with _refreshing:
         out = subprocess.run(["powershell", "-NoProfile", "-Command",
                               "[Console]::OutputEncoding = [Text.Encoding]::UTF8; "
                               "Get-StartApps | Select-Object Name, AppID | ConvertTo-Json -Compress"],
@@ -83,6 +86,15 @@ def installed_apps():
         _apps = [(a["Name"], a["AppID"]) for a in (data if isinstance(data, list) else [data])
                  if not BLOCKED.search(fold(a["Name"]))]
         _apps_time = time.monotonic()
+
+
+def installed_apps():
+    """[(nombre, AppID)] del menú Inicio, sin las bloqueadas. Tarda ~1 s en leerse, así que
+    solo se espera la primera vez; después se refresca en segundo plano cada 10 min."""
+    if not _apps:
+        _load_apps()
+    elif time.monotonic() - _apps_time > 600 and not _refreshing.locked():
+        threading.Thread(target=_load_apps, daemon=True).start()
     return _apps
 
 
@@ -123,6 +135,11 @@ def open_app(query):
         subprocess.Popen(["explorer.exe", f"shell:AppsFolder\\{app[1]}"], creationflags=NO_WINDOW)
         return app[0]
     return None
+
+
+def web_search(query):
+    """Abre la búsqueda en el navegador predeterminado."""
+    webbrowser.open("https://www.google.com/search?q=" + quote_plus(query))
 
 
 def main(argv):

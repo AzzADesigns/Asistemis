@@ -6,3 +6,4 @@ __pycache__/
 # Datos privados (lo que oye el micro)
 asistemis.log
 ultima-nota.wav
+claude-errores.log

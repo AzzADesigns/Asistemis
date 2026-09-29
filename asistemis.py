@@ -9,12 +9,14 @@ Ctrl+Alt+N empieza/termina sin decir la palabra de activación; Ctrl+Alt+C abre 
 """
 
 import ctypes
+import glob
 import logging
 import os
 import queue
 import re
 import socket
 import subprocess
+import sys
 import threading
 import time
 import tkinter as tk
@@ -29,7 +31,7 @@ import sounddevice as sd
 from PIL import Image, ImageDraw
 from pynput import keyboard
 
-from herramientas import NOTES_FILE, open_app, save_note, fold
+from herramientas import NOTES_FILE, fold, installed_apps, open_app, save_note, web_search
 from ordenes import Panel
 
 # --- Configuración ----------------------------------------------------------
@@ -39,16 +41,17 @@ WAKE_THRESHOLD = 0.85      # parecido mínimo (0-1) para aceptar la palabra de a
 WAKE_ALIASES = {"asisten"}  # cómo la oye a veces Whisper "base" (una nota vacía se descarta)
 STOP_PHRASES = ("eso es todo", "eso seria todo")
 SILENCE_SECONDS = 15       # cierra la nota tras este silencio aunque no se oiga "eso es todo"
-QUICK_SILENCE = 2.5        # silencio que basta para cerrar un "abrime <aplicación>"
+COMMAND_SILENCE = 0.8      # pausa tras la que se mira si lo dicho es una orden (y se ejecuta ya)
 MAX_SECONDS = 180          # corte de seguridad si no se oye "eso es todo"
 PREROLL_SECONDS = 4.0      # audio previo a la detección que se incluye en la nota
-CHECK_EVERY = 10           # bloques (1 s) entre escuchas de la palabra de activación / del final
+CHECK_EVERY = 10           # bloques (1 s) entre escuchas de la palabra de activación / del final (CPU)
+CHECK_EVERY_GPU = 5        # con la tarjeta gráfica se puede escuchar cada 0,5 s
 CHECK_WINDOW = 30          # bloques (3 s) que se escuchan cada vez
 SPEECH_LEVEL = 0.3         # volumen mínimo (0-1) para considerar que alguien habla
 HOTKEY = "<ctrl>+<alt>+n"
 PANEL_HOTKEY = "<ctrl>+<alt>+c"
 WHISPER_MODEL = "large-v3-turbo"  # transcribe la nota (small se equivoca mucho con el micro del JBL)
-LISTEN_MODEL = "base"      # más rápido, para escuchar continuamente
+LISTEN_MODEL = "base"      # sin tarjeta gráfica: más rápido, para escuchar continuamente
 LOG_HEARD = True           # True: registra en el log lo que oye (para ajustar la activación)
 
 BASE = Path(__file__).resolve().parent
@@ -93,7 +96,8 @@ def similar(a, b):
 
 
 # qué se pide justo después de "Asistemis"
-COMMANDS = (("note", r"(?:anot|apunt)"), ("open", r"abr[ie]"), ("order", r"ejecut"))
+COMMANDS = (("note", r"(?:anot|apunt)"), ("open", r"abr[ie]"), ("search", r"busc"), ("order", r"ejecut"))
+ACTIONS = ("open", "search", "order")  # se ejecutan en cuanto hay una pausa
 
 
 def command_of(token):
@@ -104,6 +108,7 @@ def parse(text):
     """Separa qué se pide y el contenido:
     'Asistemis, anota hacer tarea 1, eso es todo.' -> ('note', 'Hacer tarea 1')
     'Asistemis, abrime el Chrome.'                 -> ('open', 'El Chrome')
+    'Asistemis, buscá recetas de pizza.'           -> ('search', 'Recetas de pizza')
     'Asistemis, ejecuta busca X, eso es todo.'     -> ('order', 'Busca X')
     Tolera lo que Whisper suele oír mal ('Asistemi zanato', 'eso que es todo') y el
     audio previo a "Asistemis" que entra en la grabación."""
@@ -188,15 +193,17 @@ class Engine(threading.Thread):
         self.blocks_seen = 0
         self.last_heard = ""               # lo último que oyó la escucha de activación
         self.heard = []                    # lo que oye mientras graba
-        self.opening = False               # parece un "abrime <aplicación>": basta poco silencio
+        self.opening = False               # la escucha ya oyó una orden ("abrime chrome")
+        self.gpu = False
+        self.check_every = CHECK_EVERY
+        self.probing = threading.Event()   # hay una transcripción de pausa en curso
+        self.probed_at = None              # momento de voz que ya se transcribió en una pausa
 
     def run(self):
         try:
             os.environ["HF_HUB_OFFLINE"] = "1"  # los modelos ya están descargados: no consultar internet
-            from faster_whisper import WhisperModel
-            self.listener = WhisperModel(LISTEN_MODEL, device="cpu", compute_type="int8",
-                                         download_root=str(WHISPER_DIR))
-            threading.Thread(target=self._load_whisper, args=(WhisperModel,), daemon=True).start()
+            threading.Thread(target=installed_apps, daemon=True).start()  # lista de apps, para abrir al instante
+            self._load_models()
             stream = self._open_stream()
         except Exception as e:
             log.exception("no se pudo iniciar")
@@ -222,7 +229,10 @@ class Engine(threading.Thread):
                     if level(block) >= SPEECH_LEVEL:
                         self.last_voice = now
                     self._maybe_check(self.chunks, "stop")
-                    if now - self.last_voice > (QUICK_SILENCE if self.opening else SILENCE_SECONDS):
+                    silent = now - self.last_voice
+                    if silent >= COMMAND_SILENCE and self.probed_at != self.last_voice:
+                        self._probe()
+                    if silent > SILENCE_SECONDS:
                         log.info("silencio: nota cerrada")
                         self._finish()
                     elif now - self.started > MAX_SECONDS:
@@ -233,10 +243,10 @@ class Engine(threading.Thread):
         """Cada segundo, si alguien habla, escucha los últimos 3 s en segundo plano.
         Para el final basta con que se haya hablado en esos 3 s: "eso es todo" suele
         decirse bajando la voz, justo antes de callarse."""
-        if self.blocks_seen % CHECK_EVERY or self.checking.is_set():
+        if self.blocks_seen % self.check_every or self.checking.is_set():
             return
         window = blocks[-CHECK_WINDOW:]
-        recent = window if kind == "stop" else window[-CHECK_EVERY:]
+        recent = window if kind == "stop" else window[-self.check_every:]
         if max(level(b) for b in recent) < SPEECH_LEVEL:
             return
         self.checking.set()
@@ -259,6 +269,31 @@ class Engine(threading.Thread):
             log.exception("error al escuchar")
         finally:
             self.checking.clear()
+
+    def _probe(self):
+        """Tras una pausa, transcribe lo dicho: si es una orden se ejecuta ya, sin esperar
+        a "eso es todo". En la CPU tarda ~7 s, así que solo se hace si la escucha ya oyó la orden."""
+        if self.probing.is_set() or not (self.gpu or self.opening):
+            return
+        self.probed_at = self.last_voice
+        self.probing.set()
+        audio = np.concatenate(self.chunks).astype(np.float32) / 32768
+        threading.Thread(target=self._probe_run, args=(audio, self.generation, self.last_voice),
+                         daemon=True).start()
+
+    def _probe_run(self, audio, generation, voice_at):
+        try:
+            self.whisper_ready.wait()
+            segments, _ = self.whisper.transcribe(audio, language="es", beam_size=5, vad_filter=True,
+                                                  without_timestamps=True)
+            text = "".join(s.text for s in segments).strip()
+            if LOG_HEARD:
+                log.info("pausa: %s", text)
+            self.commands.put(("probe", generation, text, voice_at))
+        except Exception:
+            log.exception("error al transcribir la pausa")
+        finally:
+            self.probing.clear()
 
     def _open_stream(self):
         def callback(indata, frames, time_info, status):
@@ -296,14 +331,20 @@ class Engine(threading.Thread):
             except queue.Empty:
                 return True
             if isinstance(cmd, tuple):  # resultado de una escucha: ("wake" | "stop" | "heard", generación, …)
-                cmd, generation, *text = cmd
+                cmd, generation, *rest = cmd
                 if generation != self.generation:
                     continue
-            if cmd == "heard":
+            if cmd == "probe":
+                text, voice_at = rest
+                kind, body = parse(text)
+                # solo si sigue callado desde entonces: si volvió a hablar, la orden no había terminado
+                if self.state == self.RECORDING and kind in ACTIONS and body and voice_at == self.last_voice:
+                    self._run_text(text)
+            elif cmd == "heard":
                 if self.state == self.IDLE:
-                    self.last_heard = text[0]
+                    self.last_heard = rest[0]
                 elif self.state == self.RECORDING:
-                    self.heard.append(text[0])
+                    self.heard.append(rest[0])
                     self.opening = self._is_opening(self.heard)
             elif cmd == "quit":
                 return False
@@ -331,9 +372,17 @@ class Engine(threading.Thread):
 
     @staticmethod
     def _is_opening(heard):
-        """¿Ya se oyó "Asistemis, abrime <algo>"? Entonces basta con poco silencio."""
+        """¿La escucha ya oyó una orden ("Asistemis, abrime <algo>")?"""
         kind, body = parse(" ".join(heard))
-        return kind == "open" and bool(body)
+        return kind in ACTIONS and bool(body)
+
+    def _run_text(self, text):
+        """La transcripción de la pausa ya es la orden completa: se ejecuta sin volver a transcribir."""
+        log.info("orden tras la pausa")
+        self.state = self.TRANSCRIBING
+        self.generation += 1
+        self.chunks = []
+        threading.Thread(target=self._act, args=(text,), daemon=True).start()
 
     def _finish(self):
         if not self.chunks:
@@ -352,6 +401,30 @@ class Engine(threading.Thread):
         self.preroll.clear()
         self.generation += 1
         self.state = self.IDLE
+
+    def _load_models(self):
+        """Con tarjeta NVIDIA, un solo modelo "turbo" en la GPU escucha y transcribe (~0,3 s).
+        Sin ella, "base" escucha en la CPU y "turbo" se carga aparte para las notas (~7 s)."""
+        for d in glob.glob(os.path.join(sys.prefix, "Lib", "site-packages", "nvidia", "*", "bin")):
+            os.add_dll_directory(d)  # cuBLAS / cuDNN instalados con pip
+            os.environ["PATH"] = d + os.pathsep + os.environ["PATH"]
+        import ctranslate2
+        from faster_whisper import WhisperModel
+        if ctranslate2.get_cuda_device_count() > 0:
+            try:
+                model = WhisperModel(WHISPER_MODEL, device="cuda", compute_type="float16",
+                                     download_root=str(WHISPER_DIR))
+                model.transcribe(np.zeros(SR, np.float32), language="es")  # calienta la GPU
+                self.listener = self.whisper = model
+                self.gpu, self.check_every = True, CHECK_EVERY_GPU
+                self.whisper_ready.set()
+                log.info("whisper cargado en la GPU")
+                return
+            except Exception:
+                log.exception("no se pudo usar la GPU; sigo con la CPU")
+        self.listener = WhisperModel(LISTEN_MODEL, device="cpu", compute_type="int8",
+                                     download_root=str(WHISPER_DIR))
+        threading.Thread(target=self._load_whisper, args=(WhisperModel,), daemon=True).start()
 
     def _load_whisper(self, WhisperModel):
         try:
@@ -379,6 +452,16 @@ class Engine(threading.Thread):
             text = "".join(s.text for s in segments).strip()
             if LOG_HEARD:
                 log.info("nota completa: %s", text)
+        except Exception as e:
+            log.exception("error al transcribir")
+            self.ui.put(("error", str(e)))
+            self.commands.put("done")
+            return
+        self._act(text)
+
+    def _act(self, text):
+        """Hace lo que se pidió: anotar, abrir, buscar o pasárselo a Claude."""
+        try:
             kind, body = parse(text)
             if not body:
                 self.ui.put(("nothing",))
@@ -390,12 +473,17 @@ class Engine(threading.Thread):
                 save_note(body, tag="[abrir]")
                 log.info("abierta: %s", app)
                 self.ui.put(("opened", app))
+            elif kind == "search":
+                web_search(body)
+                save_note(body, tag="[buscar]")
+                log.info("búsqueda web")
+                self.ui.put(("searched", body))
             else:  # orden, o una aplicación que no se encontró: que se ocupe Claude
                 order = body if kind == "order" else f"Abrime {body}"
                 log.info("orden para Claude")
                 self.ui.put(("order", order))
         except Exception as e:
-            log.exception("error al transcribir")
+            log.exception("error al ejecutar")
             self.ui.put(("error", str(e)))
         finally:
             self.commands.put("done")
@@ -506,7 +594,7 @@ class Widget:
                 self.levels.append(args[0])
                 redraw = True
             elif msg == "ready":
-                self.set("Listo. Di «Asistemis, anota… / abrime… / ejecuta…»", GREEN)
+                self.set("Listo. Di «Asistemis, anota… / abrime… / busca… / ejecuta…»", GREEN)
                 self._hide_after(3000)
             elif msg == "listening":
                 self.levels.extend([0.0] * BARS)
@@ -522,6 +610,9 @@ class Widget:
                 self._hide_after(4000)
             elif msg == "opened":
                 self.set(f"✓ Abriendo {args[0]}", GREEN)
+                self._hide_after(2500)
+            elif msg == "searched":
+                self.set("✓ Buscando en el navegador", GREEN, note=args[0])
                 self._hide_after(2500)
             elif msg == "order":
                 self.set("→ Enviado a Claude", ACCENT, note=args[0])
@@ -580,7 +671,8 @@ def main():
     engine = Engine(ui)
     root = tk.Tk()
     root.title("Asistemis")
-    Widget(root, engine, ui, Panel(root))
+    panel = Panel(root)
+    Widget(root, engine, ui, panel)
 
     def quit_app():
         engine.commands.put("quit")
@@ -600,6 +692,7 @@ def main():
     log.info("Asistemis iniciado")
 
     root.mainloop()
+    panel.close()
     hotkeys.stop()
     tray.stop()
 

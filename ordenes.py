@@ -1,7 +1,9 @@
-"""Órdenes para Claude: las lanza con `claude -p` y las muestra en un panel.
+"""Órdenes para Claude: las pasa a un `claude -p` que queda abierto y las muestra en un panel.
 
-Claude trabaja en la carpeta `claude/` (ver su CLAUDE.md) y solo puede leer, buscar,
-abrir aplicaciones y anotar: todo lo demás lo rechaza el modo "dontAsk".
+El proceso se arranca de antemano y sigue vivo entre órdenes (ahorra ~4 s por orden);
+toda la conversación ocurre en él. Claude trabaja en la carpeta `claude/` (ver su
+CLAUDE.md) y solo puede leer, buscar, abrir aplicaciones y anotar: todo lo demás lo
+rechaza el modo "dontAsk".
 """
 
 import json
@@ -22,6 +24,7 @@ ALLOWED_TOOLS = ["Read", "Glob", "Grep", "WebSearch", "WebFetch",
                  "PowerShell(./abrir.cmd *)", "PowerShell(./anotar.cmd *)",
                  r"PowerShell(.\abrir.cmd *)", r"PowerShell(.\anotar.cmd *)"]
 TIMEOUT = 600  # s
+ERROR_LOG = Path(__file__).resolve().parent / "claude-errores.log"
 
 # qué se ve mientras Claude usa cada herramienta
 TOOL_LABELS = {"Read": "Leyendo…", "Glob": "Buscando archivos…", "Grep": "Buscando…",
@@ -30,44 +33,85 @@ TOOL_LABELS = {"Read": "Leyendo…", "Glob": "Buscando archivos…", "Grep": "Bu
 log = logging.getLogger("asistemis")
 
 
-def ask_claude(order, session, on_progress):
-    """Ejecuta la orden y devuelve (respuesta, session_id, es_error)."""
-    exe = shutil.which("claude")
-    if not exe:
-        return "No encontré Claude Code (el comando «claude»).", session, True
-    cmd = [exe, "-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "dontAsk",
-           "--effort", "low", "--allowedTools", *ALLOWED_TOOLS]
-    if session:
-        cmd += ["--resume", session]
-    proc = subprocess.Popen(cmd, cwd=CLAUDE_DIR, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
-                            creationflags=NO_WINDOW)
-    timer = threading.Timer(TIMEOUT, proc.kill)
-    timer.start()
-    result = None
-    try:
-        proc.stdin.write(order)
-        proc.stdin.close()
+class ClaudeSession:
+    """Un `claude -p` con entrada stream-json: recibe órdenes por stdin y responde por stdout.
+    Avisa con on_event("progress", texto) y on_event("answer", respuesta, es_error)."""
+
+    def __init__(self, on_event):
+        self.on_event = on_event
+        self.proc = None
+        self.session = None  # para retomar la conversación si el proceso se cierra
+        self.waiting = False
+        self.timer = None
+
+    def start(self):
+        exe = shutil.which("claude")
+        if not exe:
+            raise RuntimeError("No encontré Claude Code (el comando «claude»).")
+        cmd = [exe, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+               "--permission-mode", "dontAsk", "--effort", "low", "--allowedTools", *ALLOWED_TOOLS]
+        if self.session:
+            cmd += ["--resume", self.session]
+        errors = open(ERROR_LOG, "a", encoding="utf-8")
+        self.proc = subprocess.Popen(cmd, cwd=CLAUDE_DIR, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                     stderr=errors, text=True, encoding="utf-8", errors="replace",
+                                     creationflags=NO_WINDOW)
+        errors.close()
+        threading.Thread(target=self._read, args=(self.proc,), daemon=True).start()
+
+    def send(self, order):
+        if not self.proc or self.proc.poll() is not None:
+            self.start()
+        self.waiting = True
+        self.timer = threading.Timer(TIMEOUT, self._timeout, args=(self.proc,))
+        self.timer.start()
+        message = {"type": "user", "message": {"role": "user", "content": order}}
+        self.proc.stdin.write(json.dumps(message) + "\n")
+        self.proc.stdin.flush()
+
+    def reset(self):
+        """Nueva conversación: otro proceso, sin retomar la anterior."""
+        self.session = None
+        self._answered()
+        self.stop()
+        self.start()
+
+    def stop(self):
+        if self.proc and self.proc.poll() is None:
+            self.proc.kill()
+        self.proc = None
+
+    def _timeout(self, proc):
+        if proc is self.proc and self.waiting:
+            log.error("claude tardó más de %s s", TIMEOUT)
+            self.stop()  # _read avisa del error al cerrarse
+
+    def _read(self, proc):
         for line in proc.stdout:
             try:
                 event = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            session = event.get("session_id", session)
+            if proc is not self.proc:
+                return
+            self.session = event.get("session_id", self.session)
             if event.get("type") == "assistant":
                 for block in event["message"].get("content", []):
                     if block.get("type") == "tool_use":
-                        on_progress(tool_label(block))
+                        self.on_event("progress", tool_label(block))
             elif event.get("type") == "result":
-                result = event
-        proc.wait()
-    finally:
-        timer.cancel()
-    if result is None:
-        err = proc.stderr.read().strip()
-        log.error("claude terminó sin respuesta: %s", err)
-        return f"Claude no respondió. {err[-300:]}", session, True
-    return result.get("result") or "(sin respuesta)", session, bool(result.get("is_error"))
+                self._answered()
+                self.on_event("answer", event.get("result") or "(sin respuesta)", bool(event.get("is_error")))
+        # el proceso terminó: si había una orden en curso, avisar
+        if proc is self.proc or self.proc is None:
+            if self.waiting:
+                self._answered()
+                self.on_event("answer", "Claude se cerró sin responder (ver claude-errores.log).", True)
+
+    def _answered(self):
+        self.waiting = False
+        if self.timer:
+            self.timer.cancel()
 
 
 def tool_label(block):
@@ -95,7 +139,8 @@ class Panel:
         self.events = queue.Queue()  # del hilo de Claude a la ventana
         self.pending = []            # órdenes en cola mientras Claude trabaja
         self.busy = False
-        self.session = None
+        self.claude = ClaudeSession(lambda *event: self.events.put(event))
+        threading.Thread(target=self._warm_up, daemon=True).start()
 
         win = self.win = ctk.CTkToplevel(root, fg_color=BG)
         win.title("Asistemis · Claude")
@@ -163,8 +208,14 @@ class Panel:
         self._next()
 
     def new_conversation(self):
-        self.session = None
+        self.pending.clear()
+        self.busy = False
+        self._set_status("Listo", GREEN)
+        threading.Thread(target=self.claude.reset, daemon=True).start()
         self._write("— Nueva conversación —\n", "meta")
+
+    def close(self):
+        self.claude.stop()
 
     # --- interno ---
 
@@ -179,21 +230,23 @@ class Panel:
         self.input.delete("1.0", "end")
         self.submit(text, "escrita")
 
+    def _warm_up(self):
+        try:
+            self.claude.start()  # deja Claude abierto y listo para la primera orden
+        except Exception as e:
+            log.exception("no se pudo arrancar Claude")
+            self.events.put(("answer", str(e), True))
+
     def _next(self):
         if self.busy or not self.pending:
             return
         self.busy = True
-        order = self.pending.pop(0)
         self._set_status("Pensando…", ACCENT)
-        threading.Thread(target=self._run, args=(order, self.session), daemon=True).start()
-
-    def _run(self, order, session):
         try:
-            answer = ask_claude(order, session, lambda text: self.events.put(("progress", text)))
+            self.claude.send(self.pending.pop(0))
         except Exception as e:
             log.exception("error al llamar a Claude")
-            answer = (f"Error al llamar a Claude: {e}", session, True)
-        self.events.put(("answer", *answer))
+            self.events.put(("answer", f"Error al llamar a Claude: {e}", True))
 
     def _poll(self):
         while True:
@@ -204,7 +257,7 @@ class Panel:
             if msg == "progress":
                 self._set_status(args[0], ACCENT)
             elif msg == "answer":
-                text, self.session, is_error = args
+                text, is_error = args
                 self._write("Claude: ", "meta")
                 self._write(text.strip() + "\n", "error" if is_error else "claude")
                 self._set_status("Error" if is_error else "Listo", RED if is_error else GREEN)
