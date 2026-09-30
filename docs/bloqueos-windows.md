@@ -73,13 +73,47 @@ Si ves eventos tipo:
 ( Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy' ).VerifiedAndReputablePolicyState
 ```
 
-| Valor | Significado | ¿Se puede apagar desde Configuración? |
-|------:|---|---|
-| `0` | Off | ya está apagado |
-| `1` | **Evaluation** | **Sí** → apagalo y listo |
-| `2` | On (estricto) | En algunos builds hace falta restablecer Windows |
+Valores según la documentación de Microsoft (no los inventes a mano):
 
-### 3.3 Probar el import a mano
+| Valor | Modo | Significado |
+|------:|---|---|
+| `0` | **Desactivado** / Apagado | No protege (y no bloquea) |
+| `1` | **Activado** (cumplimiento / enforcement) | Bloquea lo que no confía |
+| `2` | **Evaluación** | Evalúa; en algunos builds no bloquea, en otros sí aplica política |
+
+> En máquinas con el problema de Asistemis es habitual ver `1` = **Activado**, no “solo evaluación”. Por eso los DLL de PyAV se bloquean de verdad.
+
+### 3.3 Cómo se llama en Windows en español
+
+La marca a menudo se queda en inglés en la UI, pero el nombre completo en la documentación de Microsoft en español es **Control Inteligente de Aplicaciones** (también aparece como *Control de aplicaciones inteligentes*).
+
+**Ruta en Configuración (Windows 11 en español):**
+
+1. **Configuración** (Win + I)
+2. **Privacidad y seguridad**
+3. **Seguridad de Windows**
+4. **Control de aplicaciones y navegadores**  
+   *(en algunas builds: «Aplicación y control del explorador»)*
+5. **Configuración de control de aplicaciones inteligentes**  
+   *(también: «Configuración de Smart App Control» / «Smart App Control»)*
+6. Elegir **Desactivar**
+
+**Ruta desde la app Seguridad de Windows:**
+
+1. Abrir **Seguridad de Windows**
+2. **Control de aplicaciones y navegador(es)**
+3. Sección **Smart App Control** / **Control inteligente de aplicaciones**
+4. **Desactivar**
+
+**Modos en la interfaz en español:**
+
+| En la UI | En el registro |
+|---|---|
+| **Activar** / Activado | `1` |
+| **Evaluación** | `2` |
+| **Desactivar** / Desactivado | `0` |
+
+### 3.4 Probar el import a mano
 
 Con el entorno de Asistemis (desde la carpeta del proyecto):
 
@@ -95,14 +129,13 @@ Con el entorno de Asistemis (desde la carpeta del proyecto):
 
 ## 4. Solución recomendada (Smart App Control)
 
-Válida cuando el registro muestra **Evaluation (`1`)**, que es lo habitual en PCs nuevas.
+### Paso a paso (Windows en español)
 
-### Paso a paso
-
-1. **Inicio** → escribir **Seguridad de Windows** → abrirlo.
-2. **Control de apps y navegador** (App & browser control).
-3. **Smart App Control**.
-4. Elegir **Off** / **Desactivado**.
+1. **Win + I** → **Privacidad y seguridad** → **Seguridad de Windows**.
+2. **Control de aplicaciones y navegadores**.
+3. **Configuración de control de aplicaciones inteligentes**  
+   (la sección puede llamarse *Smart App Control* o *Control inteligente de aplicaciones*).
+4. Elegir **Desactivar**.
 5. Cerrar y abrir una terminal **nueva**.
 6. Verificar:
 
@@ -119,16 +152,17 @@ Válida cuando el registro muestra **Evaluation (`1`)**, que es lo habitual en P
 
    o doble clic en **`instalar.cmd`**.
 
-### ¿Y si SAC está en modo estricto (`2`)?
+> **Importante:** apagar SAC **no** es desactivar el antivirus. Windows Defender puede seguir activo al 100 %. Detalle en §5.
 
-- Apagarlo desde Configuración **puede no estar disponible**.
-- En algunos builds de Windows 11, desactivar SAC estricto exige **restablecer Windows** (conserva archivos, reinstala el SO). Es desproporcionado para esta app.
-- Alternativas:
-  - Correr Asistemis en otra máquina / usuario sin SAC estricto.
-  - Compilar/empaquetar con firma de código (fuera del alcance de esta guía).
-  - Usar una distribución de Python/Whisper que el entorno confíe (no garantizado).
+### ¿Y si no aparece la opción Desactivar?
 
-En la práctica: **si el valor es `1` (Evaluation), seguí la guía normal.**
+En builds viejos, pasar de Activado a Desactivado podía exigir restablecer Windows. Builds recientes de Windows 11 permiten desactivarlo desde Configuración sin reinstalar (ver FAQ de Microsoft sobre Control Inteligente de Aplicaciones).
+
+Si la opción no está:
+
+- Actualizá Windows.
+- O usá **Sandbox de Windows / VM** (§5.2) sin tocar la PC.
+- O solicitá al desarrollador una app firmada (no aplica a `pip install` de wheels locales).
 
 ---
 
@@ -155,7 +189,7 @@ En la práctica: **si el valor es `1` (Evaluation), seguí la guía normal.**
 |---|---|---|---|
 | **A. Sandbox de Windows / VM** | Sí | Sí (en el host) | Corrés Asistemis aislado. Es lo más limpio si no querés tocar la PC. |
 | **B. Otra máquina / usuario sin SAC estricto** | Sí | Depende | En algunas PC nuevas SAC viene en Evaluation y se puede apagar solo eso. |
-| **C. Apagar solo Smart App Control** | **Sí** | No | **No es “desactivar el antivirus”.** Defender sigue protegiendo el resto del sistema. Es el camino práctico si querés usar Asistemis en esta PC. |
+| **C. Apagar solo Smart App Control** | **Sí** | No | **No es “desactivar el antivirus”.** Defender sigue protegiendo el resto del sistema. En español: *Configuración → Privacidad y seguridad → Seguridad de Windows → Control de aplicaciones y navegadores → Configuración de control de aplicaciones inteligentes → Desactivar*. |
 | **D. Firma de código de los binarios** | Sí | Sí* | Solo aplica si distribuís un `.exe` firmado; no resuelve `pip install` de wheels sin firmar en una PC con SAC. |
 | **E. Cambiar motor de voz** (sin PyAV) | Sí | Sí | Proyecto más grande; hoy Whisper/faster-whisper depende de PyAV. |
 
@@ -227,8 +261,13 @@ Si Defender no aparece en los eventos y Code Integrity sí muestra *Smart App Co
         │
         ├─ ¿Eventos "Smart App Control Block" o notificación de Seguridad de Windows?
         │         │
-        │         ├─ SAC = 1 (Evaluation) → Apagar SAC (el AV sigue activo) → reintentar
-        │         └─ SAC = 2 (On) → ver §4 (puede requerir restablecer) o §5 Sandbox
+        │         ├─ Registro SAC = 0 → ya está Desactivado; mirá antivirus/otros
+        │         ├─ Registro SAC = 1 (Activado) → Configuración → Privacidad y
+        │         │     seguridad → Seguridad de Windows → Control de aplicaciones
+        │         │     y navegadores → Configuración de control de aplicaciones
+        │         │     inteligentes → Desactivar (el AV sigue activo)
+        │         └─ Registro SAC = 2 (Evaluación) → probar igual Desactivar;
+        │               si no, §5 Sandbox/VM
         │
         ├─ ¿Antivirus de terceros con alerta sobre avcodec/avformat?
         │         → Excluir carpeta del proyecto + %LOCALAPPDATA%\Asistemis (§5.3) → reintentar

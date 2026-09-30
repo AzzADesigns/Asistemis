@@ -79,12 +79,19 @@ if ($gpu) {
 
 # Smart App Control (Windows 11) puede bloquear los DLL de PyAV/ffmpeg:
 # "DLL load failed ... Control de aplicaciones bloqueó este archivo"
+# Registro VerifiedAndReputablePolicyState (Microsoft):
+#   0 = Desactivado, 1 = Activado (bloquea), 2 = Evaluación
 $sac = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy' -ErrorAction SilentlyContinue).VerifiedAndReputablePolicyState
-# 0=Off 1=Evaluation 2=On
 if ($sac -in 1, 2) {
-    Write-Host "`nSmart App Control está activo (modo $sac) y puede bloquear los modelos de voz." -ForegroundColor Yellow
-    Write-Host 'Si falla la descarga o al abrir: Seguridad de Windows → Control de apps y navegador' -ForegroundColor Yellow
-    Write-Host '→ Smart App Control → Off. Luego volvé a ejecutar instalar.cmd.' -ForegroundColor Yellow
+    $sacTxt = if ($sac -eq 1) { 'Activado' } else { 'Evaluación' }
+    Write-Host "`nSmart App Control está $sacTxt y puede bloquear los modelos de voz (PyAV/ffmpeg)." -ForegroundColor Yellow
+    Write-Host 'No es el antivirus: Windows Defender puede seguir activo.' -ForegroundColor Yellow
+    Write-Host 'Ruta en Windows en español:' -ForegroundColor Yellow
+    Write-Host '  Configuración → Privacidad y seguridad → Seguridad de Windows' -ForegroundColor Yellow
+    Write-Host '  → Control de aplicaciones y navegadores' -ForegroundColor Yellow
+    Write-Host '  → Configuración de control de aplicaciones inteligentes → Desactivar' -ForegroundColor Yellow
+    Write-Host '(también: Seguridad de Windows → Control de aplicaciones y navegador)' -ForegroundColor Yellow
+    Write-Host 'Después volvé a ejecutar instalar.cmd.' -ForegroundColor Yellow
 }
 
 Paso 'Comprobando PyAV ( Whisper lo necesita)'

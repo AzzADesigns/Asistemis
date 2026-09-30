@@ -224,15 +224,20 @@ Por privacidad, Asistemis **no guarda lo que oye**. Si quieres ajustar la activa
 <details>
 <summary><b>«DLL load failed … Control de aplicaciones bloqueó este archivo»</b></summary>
 
-Windows 11 **Smart App Control** bloquea los DLL de PyAV/ffmpeg (los usa Whisper). Se ve en el instalador o al abrir Asistemis, sobre todo al descargar los modelos. También salta una notificación de Seguridad de Windows: *«Parte de esta aplicación se ha bloqueado… no podemos confirmar quién publicó avformat-….dll»*.
+Windows 11 **Smart App Control** (en español: **Control Inteligente de Aplicaciones**) bloquea los DLL de PyAV/ffmpeg (los usa Whisper). Se ve en el instalador o al abrir Asistemis, sobre todo al descargar los modelos. También salta una notificación de Seguridad de Windows: *«Parte de esta aplicación se ha bloqueado… no podemos confirmar quién publicó avformat-….dll»*.
 
-1. **Inicio** → **Seguridad de Windows** → **Control de apps y navegador** → **Smart App Control** → **Off**.
-2. Verificá: `.venv\Scripts\python.exe -c "import av; print(av.__version__)"`.
-3. Volvé a ejecutar `instalar.cmd` (o abrí Asistemis para que baje los modelos).
+**Ruta en Windows en español** (no es el antivirus; Defender puede seguir activo):
 
-> Si Smart App Control está en modo estricto (no Evaluation), apagarlo puede requerir restablecer Windows. En modo Evaluation se apaga desde Configuración.
+1. **Win + I** → **Privacidad y seguridad** → **Seguridad de Windows**
+2. **Control de aplicaciones y navegadores**
+3. **Configuración de control de aplicaciones inteligentes**  
+   (puede aparecer como *Smart App Control*)
+4. **Desactivar**
+5. Terminal nueva y verificar:  
+   `.venv\Scripts\python.exe -c "import av; print(av.__version__)"`
+6. Volvé a ejecutar `instalar.cmd` (o abrí Asistemis para que baje los modelos).
 
-Guía paso a paso, registro del sistema y antivirus: **[docs/bloqueos-windows.md](docs/bloqueos-windows.md)**.
+Guía completa (registro, antivirus, Sandbox): **[docs/bloqueos-windows.md](docs/bloqueos-windows.md)**.
 
 </details>
 
