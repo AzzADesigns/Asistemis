@@ -77,13 +77,37 @@ if ($gpu) {
     Write-Host 'Sin tarjeta NVIDIA: Whisper usará el procesador (las notas tardan unos segundos más).' -ForegroundColor Yellow
 }
 
+# Smart App Control (Windows 11) puede bloquear los DLL de PyAV/ffmpeg:
+# "DLL load failed ... Control de aplicaciones bloqueó este archivo"
+$sac = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy' -ErrorAction SilentlyContinue).VerifiedAndReputablePolicyState
+# 0=Off 1=Evaluation 2=On
+if ($sac -in 1, 2) {
+    Write-Host "`nSmart App Control está activo (modo $sac) y puede bloquear los modelos de voz." -ForegroundColor Yellow
+    Write-Host 'Si falla la descarga o al abrir: Seguridad de Windows → Control de apps y navegador' -ForegroundColor Yellow
+    Write-Host '→ Smart App Control → Off. Luego volvé a ejecutar instalar.cmd.' -ForegroundColor Yellow
+}
+
+Paso 'Comprobando PyAV ( Whisper lo necesita)'
+$ErrorActionPreference = 'Continue'
+& $py -c 'import av; print("av", av.__version__)' 2>$null
+$avCode = $LASTEXITCODE
+$ErrorActionPreference = 'Stop'
+if ($avCode -ne 0) {
+    Write-Host 'PyAV no carga. Casi siempre es Smart App Control bloqueando los DLL de ffmpeg.' -ForegroundColor Red
+    Write-Host 'Apagalo (ver mensaje anterior) y volvé a ejecutar instalar.cmd.' -ForegroundColor Red
+    Write-Host 'La instalación continúa, pero las notas/dictado no van a funcionar hasta resolverlo.' -ForegroundColor Yellow
+}
+
 # 3. Modelos de voz (Whisper)
 if (-not $SinDescargarModelos) {
     Paso 'Descargando los modelos de voz (~1,6 GB, solo la primera vez)'
     $modelos = if ($gpu) { "'large-v3-turbo'" } else { "'large-v3-turbo', 'base'" }
     $cache = (Join-Path $env:LOCALAPPDATA 'Asistemis\models\whisper').Replace('\', '/')
     & $py -c "from faster_whisper import download_model; [download_model(m, cache_dir='$cache') for m in ($modelos,)]"
-    if ($LASTEXITCODE -ne 0) { Write-Host 'No se pudieron descargar; se descargarán al abrir Asistemis.' -ForegroundColor Yellow }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host 'No se pudieron descargar; se descargarán al abrir Asistemis.' -ForegroundColor Yellow
+        Write-Host 'Si el error menciona "Control de aplicaciones", apagá Smart App Control y reintentá.' -ForegroundColor Yellow
+    }
 }
 
 # 4. Accesos directos (menú Inicio y, si se quiere, arranque con Windows)

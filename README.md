@@ -218,6 +218,24 @@ Por privacidad, Asistemis **no guarda lo que oye**. Si quieres ajustar la activa
 
 ## ❓ Problemas frecuentes
 
+> 📖 **Guía completa de bloqueos de Windows** (Smart App Control, antivirus, PyAV/ffmpeg):  
+> **[docs/bloqueos-windows.md](docs/bloqueos-windows.md)**
+
+<details>
+<summary><b>«DLL load failed … Control de aplicaciones bloqueó este archivo»</b></summary>
+
+Windows 11 **Smart App Control** bloquea los DLL de PyAV/ffmpeg (los usa Whisper). Se ve en el instalador o al abrir Asistemis, sobre todo al descargar los modelos. También salta una notificación de Seguridad de Windows: *«Parte de esta aplicación se ha bloqueado… no podemos confirmar quién publicó avformat-….dll»*.
+
+1. **Inicio** → **Seguridad de Windows** → **Control de apps y navegador** → **Smart App Control** → **Off**.
+2. Verificá: `.venv\Scripts\python.exe -c "import av; print(av.__version__)"`.
+3. Volvé a ejecutar `instalar.cmd` (o abrí Asistemis para que baje los modelos).
+
+> Si Smart App Control está en modo estricto (no Evaluation), apagarlo puede requerir restablecer Windows. En modo Evaluation se apaga desde Configuración.
+
+Guía paso a paso, registro del sistema y antivirus: **[docs/bloqueos-windows.md](docs/bloqueos-windows.md)**.
+
+</details>
+
 <details>
 <summary><b>El instalador dice que no encuentra Python 3.10–3.12</b></summary>
 

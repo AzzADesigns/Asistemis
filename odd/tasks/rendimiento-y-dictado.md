@@ -107,8 +107,10 @@ Reducir consumo innecesario de CPU/RAM en Asistemis y añadir un modo de transcr
 - [x] T7 — comando de voz para iniciar dictado (commit 53f222c)
 - [ ] T8 — integración y verificación final
   - [x] Fix detección de Python en instalar.ps1 (splatting PS 5.1 + fallback a ruta Python312)
-  - [x] Documentado en README (Problemas frecuentes)
-  - [ ] Prueba manual del usuario (pendiente)
+  - [x] Detección SAC + chequeo `import av` en instalar.ps1
+  - [x] docs/bloqueos-windows.md — guía completa Smart App Control / antivirus / PyAV
+  - [x] README enlaza la guía y documenta el error de Control de aplicaciones
+  - [ ] Prueba manual del usuario (apagar SAC → import av → instalar modelos → dictado)
   - [ ] README del dictado (pendiente tras probar)
 
 ## Prueba manual sugerida (antes del push)
