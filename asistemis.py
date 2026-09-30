@@ -34,7 +34,7 @@ import pystray
 import sounddevice as sd
 from PIL import Image, ImageDraw
 
-from herramientas import (APP_DIR, DATA_DIR, FROZEN, HOTWORDS, NOTES_FILE, STATUSES, add_task, close_app, pause_music, play_music,
+from herramientas import (APP_DIR, DATA_DIR, FROZEN, HOTWORDS, NOTES_FILE, STATUSES, add_task, close_app, next_track, pause_music, play_music, prev_track,
                           delete_task, fold, installed_apps, move_task, open_app, save_note, web_search)
 from interfaz import Interface
 from ordenes import ClaudeChat
@@ -152,8 +152,10 @@ HELP_TEXT = {
         "Música",
         "«Asistemis, reproducime música»\n"
         "«poné música» / «quiero escuchar música»\n\n"
-        "Para pausar o detener:\n"
-        "• «detene la música» / «pausá» / «stop música»\n"
+        "Controles:\n"
+        "• Pausar: «detene la música» / «pausá» / «stop música»\n"
+        "• Siguiente: «siguiente canción» / «el siguiente tema»\n"
+        "• Anterior: «canción anterior» / «la anterior»\n\n"
         "Necesita YouTube Music instalada como app."
     ),
     "power": (
@@ -281,7 +283,8 @@ def similar(a, b):
 # "ejecutá <app o juego>" lo abre Asistemis; solo si no es una app se lo pasa a Claude
 COMMANDS = (("note", r"(?:anot|apunt)"), ("open", r"(?:abr[ie]|inici|arranc|lanz|jug)"),
             ("close", r"(?:cerr|cier)"), ("search", r"busc"), ("order", r"ejecut"))
-ACTIONS = ("open", "close", "search", "order", "task_add", "task_move", "music", "music_stop")  # se ejecutan en cuanto hay una pausa
+ACTIONS = ("open", "close", "search", "order", "task_add", "task_move", "music", "music_stop",
+           "music_next", "music_prev")  # se ejecutan en cuanto hay una pausa
 TASK_SILENCE = 1.5  # "agregá la tarea …" espera un poco más de silencio: la frase puede ser larga
 
 # dictado continuo: frases que lo inician (T7). "anota" NO cuenta: eso sigue siendo nota normal.
@@ -345,6 +348,34 @@ def music_stop_command(text, start, end):
         return ("music_stop", "YouTube Music")
     if re.match(r"^(?:esto|eso)\b", core):
         return ("music_stop", "YouTube Music")
+    return None
+
+
+# siguiente / anterior pista: "siguiente canción", "el siguiente tema", "la anterior"
+_SKIP_LEAD = r"(?:(?:por\s+favor|porfa|che|bueno|a\s+ver|eh|la|el|lo|las|los|una|un|otra|otro|mi|tu|su)\s+)*"
+MUSIC_NEXT = re.compile(
+    _SKIP_LEAD + r"(?:siguiente|proxim\w*|next)\b"
+    r"(?:\s+(?:la|el|una|otra|cancion|canción|tema|pista|canci[oó]n|song))?"
+    r"|" + _SKIP_LEAD + r"(?:(?:cancion|canción|tema|pista|canci[oó]n)\s+(?:siguiente|proxim\w*|next))"
+)
+MUSIC_PREV = re.compile(
+    _SKIP_LEAD + r"(?:anterior|previ\w*|prev|atr[aá]s)\b"
+    r"(?:\s+(?:la|el|una|otra|cancion|canción|tema|pista|canci[oó]n|song))?"
+    r"|" + _SKIP_LEAD + r"(?:(?:cancion|canción|tema|pista|canci[oó]n)\s+(?:anterior|previ\w*|prev))"
+)
+
+
+def _music_skip_command(text, start, end):
+    """("music_next"|"music_prev", "YouTube Music") o None. No roba dictado ni notas."""
+    seg = fold(text[start:end]).strip(" ,.;:¡!¿?-—'\"")
+    if not seg:
+        return None
+    if re.search(r"dictad|transcrib", seg) or re.match(r"(?:anot|apunt)", seg):
+        return None
+    if MUSIC_NEXT.match(seg):
+        return ("music_next", "YouTube Music")
+    if MUSIC_PREV.match(seg):
+        return ("music_prev", "YouTube Music")
     return None
 
 
@@ -440,6 +471,8 @@ def parse(text):
         # pausar música antes de ayuda: "detene la música" no debe ir a "cómo cortar"
         elif not with_note and (mstop := music_stop_command(text, start, end)):
             return mstop
+        elif not with_note and (mskip := _music_skip_command(text, start, end)):
+            return mskip
         # ayuda / preguntas: "¿cómo funciona la transcripción?", "¿qué comandos hay?"
         elif not with_note and (hq := help_or_question(text, start, end)):
             return hq
@@ -455,6 +488,8 @@ def parse(text):
         return music
     elif mstop := music_stop_command(text, 0, end):  # "detene la música" / "pausa"
         return mstop
+    elif mskip := _music_skip_command(text, 0, end):  # "siguiente canción" / "la anterior"
+        return mskip
     elif tokens and command_of(tokens[0].group()):  # grabación con Ctrl+Alt+N: "ejecuta …"
         kind, start = command_of(tokens[0].group()), tokens[0].end()
     else:
@@ -1267,6 +1302,14 @@ class Engine(threading.Thread):
                 result = pause_music()
                 log.info("música pausa: %s", result)
                 self.ui.put(("music_stop", result or "failed"))
+            elif kind == "music_next":
+                result = next_track()
+                log.info("música siguiente: %s", result)
+                self.ui.put(("music_next", result or "failed"))
+            elif kind == "music_prev":
+                result = prev_track()
+                log.info("música anterior: %s", result)
+                self.ui.put(("music_prev", result or "failed"))
             elif kind == "help":
                 title, detail = help_toast(body or "general")
                 log.info("ayuda: %s", body)

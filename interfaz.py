@@ -416,6 +416,10 @@ class Interface:
                            "already_paused": ("muted", "Ya estaba en pausa", "YouTube Music", 2.5),
                            "not_open": ("muted", "YouTube Music no está abierta", "No había nada que pausar", 3.0),
                            }.get(args[0] if args else "", ("error", "No pude pausar la música", "Probá «pausá» o la tecla del teclado", 4.0)),
+            "music_next": {"ok": ("ok", "Siguiente canción", "YouTube Music", 2.5)
+                           }.get(args[0] if args else "", ("error", "No pude pasar a la siguiente", "¿Está abierta YouTube Music?", 3.5)),
+            "music_prev": {"ok": ("ok", "Canción anterior", "YouTube Music", 2.5)
+                           }.get(args[0] if args else "", ("error", "No pude volver a la anterior", "¿Está abierta YouTube Music?", 3.5)),
             "order": ("claude", "Enviado a Claude", args[0] if args else "", 2.5),
             "help": ("ok", args[0] if args else "Ayuda", args[1] if len(args) > 1 else "Mirá la pestaña Ayuda", 9.0),
             "dictation_tip": ("rec", "Dictado activo", "Hablá… Cortar: «eso es todo» · «detené» · Listo", 7.0),

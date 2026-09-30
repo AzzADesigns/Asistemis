@@ -860,6 +860,73 @@ def pause_music():
         return ui_result or ("failed" if windows else "not_open")
 
 
+NEXT_NAMES = ("Siguiente", "Next", "Pista siguiente", "Canción siguiente", "Cancion siguiente")
+PREV_NAMES = ("Anterior", "Previous", "Pista anterior", "Canción anterior", "Cancion anterior", "Atrás", "Atras")
+_NEXT_HINTS = ("siguiente", "next")
+_PREV_HINTS = ("anterior", "previous", "atrás", "atras")
+
+
+def _find_player_button(buttons, exact, hints):
+    for name, el in buttons:
+        if name in exact:
+            return el
+    for name, el in buttons:
+        nl = (name or "").lower()
+        if not nl or "reproducir " in nl:  # tracks de la lista, no el player
+            continue
+        if any(h in nl for h in hints) and len(nl) <= 28:
+            return el
+    return None
+
+
+def _media_key(vk):
+    """Tecla multimedia del teclado (Play/Pause = 0xB3, Next = 0xB0, Prev = 0xB1)."""
+    user32 = ctypes.windll.user32
+    user32.keybd_event(vk, 0, 0, 0)
+    user32.keybd_event(vk, 0, 2, 0)  # KEYEVENTF_KEYUP
+
+
+def _player_transport(direction):
+    """Siguiente/anterior pista en YouTube Music.
+    direction: "next" | "prev".
+    1) Botón de la barra vía UI Automation.
+    2) Fallback: tecla multimedia del sistema.
+    Devuelve "ok" o "failed"."""
+    app = find_app(MUSIC_APP)
+    windows = app_windows(app) if app else []
+    import uiautomation as auto
+    exact = NEXT_NAMES if direction == "next" else PREV_NAMES
+    hints = _NEXT_HINTS if direction == "next" else _PREV_HINTS
+    if windows:
+        try:
+            with auto.UIAutomationInitializerInThread():
+                window = auto.ControlFromHandle(windows[0])
+                el = _find_player_button(_buttons(window), exact, hints)
+                if el is not None:
+                    auto.Control.CreateControlFromElement(el).GetInvokePattern().Invoke()
+                    time.sleep(0.3)
+                    return "ok"
+        except Exception:
+            pass
+    vk = 0xB0 if direction == "next" else 0xB1  # VK_MEDIA_NEXT_TRACK / PREV_TRACK
+    try:
+        _media_key(vk)
+        time.sleep(0.25)
+        return "ok" if windows else "failed"
+    except Exception:
+        return "failed"
+
+
+def next_track():
+    """«Siguiente canción» / «siguiente tema»."""
+    return _player_transport("next")
+
+
+def prev_track():
+    """«Canción anterior» / «tema anterior»."""
+    return _player_transport("prev")
+
+
 def web_search(query):
     """Abre la búsqueda en el navegador predeterminado."""
     webbrowser.open("https://www.google.com/search?q=" + quote_plus(query))
