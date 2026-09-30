@@ -21,7 +21,7 @@ Dile «*Asistemis, …*» y anota, abre tus apps y juegos, organiza tus tareas, 
 
 ```text
 🎙️  «Asistemis, anota llamar al dentista el lunes… eso es todo»   →  📝 nota guardada con fecha
-🎙️  «Asistemis, quiero escuchar musica»                                   →  🚀 se abre (o aparece si ya estaba abierta)
+🎙️  «Asistemis, abrime visual studio code»                        →  🚀 se abre (o aparece si ya estaba abierta)
 🎙️  «Asistemis, agregá la tarea terminar el informe»              →  ✅ tarea #4 en Pendientes
 🎙️  «Asistemis, reproducime música»                               →  🎵 YouTube Music empieza a sonar
 ```
