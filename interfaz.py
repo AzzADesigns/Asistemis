@@ -33,7 +33,7 @@ UI_DIR = APP_DIR / "ui"
 user32, dwmapi = ctypes.WinDLL("user32"), ctypes.windll.dwmapi
 
 # tamaños en píxeles CSS (se multiplican por la escala de Windows)
-SIZES = {"toast": (340, 72), "mic": (64, 64), "rec": (380, 168), "claude": (440, 640), "main": (960, 680)}
+SIZES = {"toast": (340, 72), "mic": (64, 64), "rec": (380, 168), "claude": (440, 640), "main": (1080, 720)}
 MARGIN = 16
 TOAST_SECONDS = 2.6
 QUITTING = threading.Event()  # solo con esto activo se dejan cerrar las ventanas
@@ -317,6 +317,10 @@ class Interface:
             "opened": ("ok", f"Abriendo {args[0]}" if args else "Abriendo", "", 2.5),
             "focused": ("ok", f"{args[0]} ya estaba abierto" if args else "", "Te lo traje al frente", 2.5),
             "closed": ("ok", f"Cerrando {args[0]}" if args else "Cerrando", "", 2.5),
+            "task_added": ("ok", f"Tarea #{args[0]} agregada" if args else "", args[1] if len(args) > 1 else "", 3.0),
+            "task_moved": ("ok", f"Tarea #{args[0]} → {args[1]}" if len(args) > 1 else "", args[2] if len(args) > 2 else "", 3.0),
+            "task_deleted": ("ok", f"Tarea #{args[0]} borrada" if args else "", "", 2.5),
+            "task_missing": ("muted", f"No hay ninguna tarea #{args[0]}" if args else "", "Mira los números en la pestaña Tareas", 3.5),
             "not_open": ("muted", f"{args[0]} no está abierto" if args else "", "No había nada que cerrar", 3.0),
             "searched": ("ok", "Buscando en el navegador", args[0] if args else "", 2.5),
             "order": ("claude", "Enviado a Claude", args[0] if args else "", 2.5),
@@ -367,6 +371,22 @@ class MainApi:
 
     def delete_note(self, index, raw):
         return herramientas.delete_note(index, raw)
+
+    def tasks(self):
+        return herramientas.read_tasks()
+
+    def tasks_version(self):
+        return herramientas.tasks_version()
+
+    def add_task(self, text):
+        if text.strip():
+            herramientas.add_task(text.strip())
+
+    def move_task(self, task_id, status):
+        herramientas.move_task(int(task_id), status)
+
+    def delete_task(self, task_id):
+        herramientas.delete_task(int(task_id))
 
     def search(self, text):
         herramientas.web_search(text)

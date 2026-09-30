@@ -66,10 +66,14 @@ Sin Claude Code, todo lo demás funciona igual.
 
 | Dices | Qué hace | Cuándo termina |
 |---|---|---|
-| «Asistemis, **anota** …» | Guarda la nota con fecha en `notas-asistemis.txt`, en tu escritorio | Al decir «eso es todo» / «eso sería todo», o tras 15 s de silencio |
+| «Asistemis, **anota** …» | Guarda la nota con fecha; la ves en la ventana de Asistemis | Al decir «eso es todo» / «eso sería todo», o tras 15 s de silencio |
 | «Asistemis, **abrime** / **ejecutá** / **iniciá** / **jugá** …» | Abre la app o el juego (también los de tu biblioteca de Steam), o trae su ventana si ya está abierta | En cuanto haces una pausa |
 | «Asistemis, **cerrá** Chrome» | Cierra sus ventanas, como el botón ✕ | En cuanto haces una pausa |
 | «Asistemis, **busca** …» | Abre la búsqueda de Google en tu navegador | En cuanto haces una pausa |
+| «Asistemis, **agregá la tarea** …» / «nueva tarea …» | La agrega como pendiente, con un número (#1, #2…), en la pestaña Tareas | Tras una pausa un poco más larga |
+| «Asistemis, **estoy haciendo** / **empecé** la tarea 3» | La pasa a «En progreso» | En cuanto haces una pausa |
+| «Asistemis, **terminé** / **finalicé** la tarea 3» | La pasa a «Finalizadas» | En cuanto haces una pausa |
+| «Asistemis, **marcá la tarea 3 como pendiente**» / «**borrá** la tarea 3» | La vuelve a pendientes / la borra | En cuanto haces una pausa |
 | «Asistemis, **ejecutá** …» (algo que no es una app) | Se lo pasa a Claude y la respuesta aparece en su panel | En cuanto haces una pausa |
 
 - **La ventana de Asistemis** (se abre desde el menú Inicio, con doble clic en el icono junto al reloj o
@@ -77,6 +81,8 @@ Sin Claude Code, todo lo demás funciona igual.
   notas nuevas, copiarlas y borrarlas. Muestra también lo que abriste, cerraste y buscaste (se puede
   ocultar), tiene una pestaña con Claude y un interruptor para encender/apagar. Cerrarla no cierra
   Asistemis. Al arrancar con Windows no se abre: queda en segundo plano.
+- **Tareas**: en la ventana, pestaña *Tareas*, un tablero con Pendientes / En progreso / Finalizadas.
+  Puedes agregarlas escribiendo y moverlas arrastrándolas o con las flechas de cada tarjeta.
 - **Ctrl+Alt+C** abre el panel de Claude, donde también puedes escribir órdenes.
 - Clic derecho en el icono junto al reloj: encender/apagar, anotar sin decir «Asistemis», abrir las
   notas o salir.
@@ -91,7 +97,7 @@ anotar, pero **no** borrar, modificar ni instalar nada (ver `claude/CLAUDE.md`).
 
 ## Personalizar
 
-Tus datos (modelos de voz, ajustes y registro) están en **`%LOCALAPPDATA%\Asistemis`**
+Tus datos (notas, tareas, modelos de voz, ajustes y registro) están en **`%LOCALAPPDATA%\Asistemis`**
 (`Win+R` → `%LOCALAPPDATA%\Asistemis`), separados del programa.
 
 - **Ajustes** (`ajustes.json`, se crea solo):
@@ -117,10 +123,11 @@ Tus datos (modelos de voz, ajustes y registro) están en **`%LOCALAPPDATA%\Asist
 
 Icono junto al reloj → *Salir*. Después borra:
 - la carpeta del programa (la del repositorio, o `%LOCALAPPDATA%\Programs\Asistemis` si instalaste el .exe),
-- tus datos y modelos de voz: `%LOCALAPPDATA%\Asistemis`,
+- tus datos (notas, tareas) y modelos de voz: `%LOCALAPPDATA%\Asistemis`,
 - los accesos directos `Asistemis.lnk` del menú Inicio y de la carpeta de inicio (`Win+R` → `shell:startup`).
 
-Tus notas quedan en el escritorio.
+Tus notas y tareas están en `%LOCALAPPDATA%\Asistemis` (`notas.txt`, `tareas.json`): si quieres
+conservarlas, cópialas antes de borrar esa carpeta.
 
 ## Compilar como .exe
 

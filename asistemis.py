@@ -34,8 +34,8 @@ import pystray
 import sounddevice as sd
 from PIL import Image, ImageDraw
 
-from herramientas import (APP_DIR, DATA_DIR, FROZEN, HOTWORDS, NOTES_FILE, close_app, fold, installed_apps,
-                          open_app, save_note, web_search)
+from herramientas import (APP_DIR, DATA_DIR, FROZEN, HOTWORDS, NOTES_FILE, STATUSES, add_task, close_app,
+                          delete_task, fold, installed_apps, move_task, open_app, save_note, web_search)
 from interfaz import Interface
 from ordenes import ClaudeChat
 
@@ -105,11 +105,50 @@ def similar(a, b):
 # "ejecutá <app o juego>" lo abre Asistemis; solo si no es una app se lo pasa a Claude
 COMMANDS = (("note", r"(?:anot|apunt)"), ("open", r"(?:abr[ie]|inici|arranc|lanz|jug)"),
             ("close", r"(?:cerr|cier)"), ("search", r"busc"), ("order", r"ejecut"))
-ACTIONS = ("open", "close", "search", "order")  # se ejecutan en cuanto hay una pausa
+ACTIONS = ("open", "close", "search", "order", "task_add", "task_move")  # se ejecutan en cuanto hay una pausa
+TASK_SILENCE = 1.5  # "agregá la tarea …" espera un poco más de silencio: la frase puede ser larga
+
+# tareas: "agregá la tarea comprar pan", "estoy haciendo la tarea 3", "finalicé la tarea tres"
+NUMBER_WORDS = {w: i for i, w in enumerate(
+    "cero uno dos tres cuatro cinco seis siete ocho nueve diez once doce trece catorce quince dieciseis "
+    "diecisiete dieciocho diecinueve veinte veintiuno veintidos veintitres veinticuatro veinticinco "
+    "veintiseis veintisiete veintiocho veintinueve treinta".split())}
+NUMBER_WORDS["una"] = 1
+TASK_REF = re.compile(r"\btarea\s+(?:numero\s+|nro\.?\s*|n\s+|#\s*)?(\d+|" + "|".join(NUMBER_WORDS) + r")\b")
+TASK_STATUS = (  # en este orden: "sacá la tarea 3" es borrar, no terminar
+    ("borrar", r"\b(?:borr|elimin|sac)"),
+    ("pendiente", r"\bpendiente"),
+    ("hecha", r"\b(?:finali[zc]|termin|complet|hecha|hice|acab|list[ao]\b|cerr|cier)"),
+    ("progreso", r"\b(?:progreso|haciendo|empec|empez|arranc|comenc|comienz|trabajando|curso)"),
+)
+TASK_ADD = re.compile(r"(?:agreg\w*|anot\w*|apunt\w*|cre\w*|nuev[ao])\s+(?:(?:la|una|otra)\s+)?(?:nueva\s+)?"
+                      r"tareas?\b[\s,:]*(?:de\s+|que\s+)?")
 
 
 def command_of(token):
     return next((kind for kind, pattern in COMMANDS if re.match(pattern, token)), None)
+
+
+def task_command(text, start, end, after_note=False):
+    """("task_move", "3:progreso") / ("task_add", "Comprar pan") si lo dicho es sobre tareas, o None.
+    after_note: "anota" ya se oyó pegado a "Asistemis" ("asistemisanota la tarea …")."""
+    raw = text[start:end]
+    lead = len(raw) - len(raw.lstrip(" ,.;:¡!¿?"))
+    seg = ("anota " if after_note else "") + fold(raw[lead:])
+    if after_note:
+        lead -= len("anota ")
+    ref = TASK_REF.search(seg)
+    if ref and not re.match(r"(?:anot|apunt)", seg):
+        status = next((name for name, pattern in TASK_STATUS if re.search(pattern, seg)), None)
+        if status:
+            number = ref.group(1)
+            return "task_move", f"{int(number) if number.isdigit() else NUMBER_WORDS[number]}:{status}"
+    add = TASK_ADD.match(seg)
+    if add:
+        body = raw[lead + add.end():].strip(" \t\n,.;:¡!¿?-—'\"")
+        body = re.sub(r"[\s,;.]+(?:y|y bueno|bueno)$", "", body, flags=re.I)
+        return "task_add", body[:1].upper() + body[1:]
+    return None
 
 
 def parse(text):
@@ -118,6 +157,8 @@ def parse(text):
     'Asistemis, abrime el Chrome.'                 -> ('open', 'El Chrome')
     'Asistemis, buscá recetas de pizza.'           -> ('search', 'Recetas de pizza')
     'Asistemis, ejecuta busca X, eso es todo.'     -> ('order', 'Busca X')
+    'Asistemis, agregá la tarea comprar pan.'      -> ('task_add', 'Comprar pan')
+    'Asistemis, estoy haciendo la tarea 3.'        -> ('task_move', '3:progreso')
     Tolera lo que Whisper suele oír mal ('Asistemi zanato', 'eso que es todo') y el
     audio previo a "Asistemis" que entra en la grabación."""
     tokens = list(re.finditer(r"[a-z0-9]+", fold(text)))  # misma longitud que text
@@ -144,6 +185,8 @@ def parse(text):
     if score >= 0.75:
         k = -i + n  # primera palabra después de "Asistemis"
         start = tokens[k - 1].end()
+        if task := task_command(text, start, end, after_note=with_note):
+            return task
         nxt = tokens[k].group() if len(tokens) > k else ""
         if with_note:  # "Asistemis anota" oído junto ("asisten sanota"): lo que sigue es la nota
             pass
@@ -153,6 +196,8 @@ def parse(text):
             start = tokens[k + 1].end()  # "a notar"
         elif re.search(r"n[aeiou]t", nxt) and similar(nxt, "anota") >= 0.5:
             start = tokens[k].end()
+    elif task := task_command(text, 0, end):  # grabación con "Anotar ahora": "agregá la tarea …"
+        return task
     elif tokens and command_of(tokens[0].group()):  # grabación con Ctrl+Alt+N: "ejecuta …"
         kind, start = command_of(tokens[0].group()), tokens[0].end()
     else:
@@ -376,7 +421,10 @@ class Engine(threading.Thread):
                 kind, body = parse(text)
                 # solo si sigue callado desde entonces: si volvió a hablar, la orden no había terminado
                 if self.state == self.RECORDING and kind in ACTIONS and body and voice_at == self.last_voice:
-                    self._run_text(text)
+                    if kind == "task_add" and time.monotonic() - self.last_voice < TASK_SILENCE:
+                        self.probed_at = None  # todavía puede estar dictándola: se vuelve a mirar
+                    else:
+                        self._run_text(text)
             elif cmd == "heard":
                 if self.state == self.IDLE:
                     self.last_heard = rest[0]
@@ -578,6 +626,21 @@ class Engine(threading.Thread):
                     self.ui.put(("closed", result[0]))
                 else:  # no se le pasa a Claude: no hay nada que cerrar
                     self.ui.put(("not_open", result[0] if result else body))
+            elif kind == "task_add":
+                task_id = add_task(body)
+                log.info("tarea #%s agregada", task_id)
+                self.ui.put(("task_added", task_id, body))
+            elif kind == "task_move":
+                number, status = body.split(":")
+                number = int(number)
+                if status == "borrar":
+                    done = delete_task(number)
+                    self.ui.put(("task_deleted", number) if done else ("task_missing", number))
+                elif task := move_task(number, status):
+                    log.info("tarea #%s: %s", number, status)
+                    self.ui.put(("task_moved", number, STATUSES[status], task["text"]))
+                else:
+                    self.ui.put(("task_missing", number))
             elif kind == "search":
                 web_search(body)
                 save_note(body, tag="[buscar]")

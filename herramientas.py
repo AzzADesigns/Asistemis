@@ -43,7 +43,16 @@ def desktop_dir():
         return Path.home() / "Desktop"
 
 
-NOTES_FILE = desktop_dir() / "notas-asistemis.txt"
+NOTES_FILE = DATA_DIR / "notas.txt"  # se ven y se editan en la ventana de Asistemis
+TASKS_FILE = DATA_DIR / "tareas.json"
+
+# antes las notas estaban en el escritorio: si siguen ahí, pasan a los datos de Asistemis
+_OLD_NOTES = desktop_dir() / "notas-asistemis.txt"
+if _OLD_NOTES.exists() and not NOTES_FILE.exists():
+    try:
+        _OLD_NOTES.replace(NOTES_FILE)
+    except OSError:
+        pass
 
 
 def save_note(note, tag=""):
@@ -92,6 +101,80 @@ def notes_version():
         return 0
 
 
+# --- Tareas -----------------------------------------------------------------
+
+STATUSES = {"pendiente": "Pendiente", "progreso": "En progreso", "hecha": "Finalizada"}
+_tasks_lock = threading.Lock()
+
+
+def _load_tasks():
+    try:
+        data = json.loads(TASKS_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    data.setdefault("siguiente", 1)
+    data.setdefault("tareas", [])
+    return data
+
+
+def _save_tasks(data):
+    tmp = TASKS_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(TASKS_FILE)  # de una vez: nunca queda a medio escribir
+
+
+def read_tasks():
+    """[{"id": 3, "text": …, "status": "pendiente" | "progreso" | "hecha", "created": …, "updated": …}]"""
+    with _tasks_lock:
+        return _load_tasks()["tareas"]
+
+
+def tasks_version():
+    try:
+        return TASKS_FILE.stat().st_mtime_ns
+    except OSError:
+        return 0
+
+
+def add_task(text):
+    """Nueva tarea pendiente; devuelve su número (no se reutiliza aunque se borre)."""
+    with _tasks_lock:
+        data = _load_tasks()
+        task_id = data["siguiente"]
+        now = datetime.now().isoformat(timespec="minutes")
+        data["tareas"].append({"id": task_id, "text": text, "status": "pendiente", "created": now, "updated": now})
+        data["siguiente"] = task_id + 1
+        _save_tasks(data)
+    save_note(text, tag=f"[tarea #{task_id}]")
+    return task_id
+
+
+def move_task(task_id, status):
+    """Cambia el estado de la tarea; devuelve la tarea, o None si no existe."""
+    if status not in STATUSES:
+        return None
+    with _tasks_lock:
+        data = _load_tasks()
+        task = next((t for t in data["tareas"] if t["id"] == task_id), None)
+        if task and task["status"] != status:
+            task["status"] = status
+            task["updated"] = datetime.now().isoformat(timespec="minutes")
+            _save_tasks(data)
+            save_note(task["text"], tag=f"[tarea #{task_id} {status}]")
+    return task
+
+
+def delete_task(task_id):
+    with _tasks_lock:
+        data = _load_tasks()
+        before = len(data["tareas"])
+        data["tareas"] = [t for t in data["tareas"] if t["id"] != task_id]
+        if len(data["tareas"]) != before:
+            _save_tasks(data)
+            return True
+    return False
+
+
 def fold(text):
     """Minúsculas y sin tildes, conservando la longitud (para poder cortar el original)."""
     return "".join(unicodedata.normalize("NFD", c)[0] for c in text.lower())
@@ -126,7 +209,7 @@ ALIAS_PATTERNS = [
 ]
 
 # nombres que se le dan a Whisper como pista para que los escriba bien
-HOTWORDS = "Asistemis, abrime Steam, Antigravity IDE, Figma, Discord, Chrome, YouTube Music, Spotify."
+HOTWORDS = "Asistemis, abrime Steam, Antigravity IDE, Figma, Discord, Chrome, YouTube Music, Spotify. Agregá la tarea."
 
 FILLER = re.compile(r"^(?:el|la|los|las|un|una|mi|me|al|a|por favor|porfa)\s+|\s+(?:por favor|porfa)$")
 
