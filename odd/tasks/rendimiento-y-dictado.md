@@ -102,10 +102,19 @@ Reducir consumo innecesario de CPU/RAM en Asistemis y añadir un modo de transcr
 - [x] T2 — RAM unload al apagar (commit 6351cd2)
 - [x] T3 — Claude perezoso (commit 6351cd2)
 - [x] T4 — RMS una sola vez (commit 6351cd2)
-- [x] T5 — Estado DICTATING en Engine (asistemis.py)
-- [x] T6 — Ventana de dictado en vivo (interfaz.py + ui/dictate.html)
-- [x] T7 — Comando de voz para iniciar dictado (parse + Engine)
-- [ ] T8
+- [x] T5 — estado DICTATING en Engine (commit 53f222c)
+- [x] T6 — ventana de dictado en vivo (commit 53f222c)
+- [x] T7 — comando de voz para iniciar dictado (commit 53f222c)
+- [ ] T8 — integración y verificación final (Pendiente: prueba manual del usuario + README)
+
+## Prueba manual sugerida (antes del push)
+1. Nota larga con pausas: "Asistemis, anota … eso es todo" → se guarda completa (probe incremental).
+2. Apagar (Ctrl+Alt+N) → RAM en Task Manager baja (modelos descargados).
+3. Reencender → wake vuelve (recarga modelos).
+4. "Asistemis, ejecutá resumime algo" sin haber usado Claude → Claude arranca en ese momento.
+5. Dictado: "Asistemis, mododictado" o "transcribí" → ventana en vivo; hablar un rato; "eso es todo" o botón Listo → nota [dictado] en el panel.
+6. "Anotar ahora" del tray sigue funcionando igual (no es dictado).
+7. Abrir apps / tareas / música sin cambios.
 
 ## Evidencia / Notas
 - Análisis de arquitectura completado (explore): problemas P1-P14 identificados con líneas.
