@@ -379,8 +379,7 @@ class MainApi:
         return herramientas.tasks_version()
 
     def add_task(self, text):
-        if text.strip():
-            herramientas.add_task(text.strip())
+        return herramientas.add_task(text.strip()) if text.strip() else None
 
     def move_task(self, task_id, status):
         herramientas.move_task(int(task_id), status)

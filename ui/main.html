@@ -306,7 +306,7 @@ function renderNotes(keepScroll) {
     const label = order ? `<span class="label">CLAUDE · ${n.tag.includes("voz") ? "POR VOZ" : "ESCRITA"}</span>` : "";
     html += `<div class="note${order ? " order" : ""}" data-i="${n.i}">
       <div class="bubble">${label}${highlight(n.text, q)}</div>
-      <div class="meta"><div class="acts"><button class="mini" data-copy>Copiar</button><button class="mini" data-del>Borrar</button></div>${n.time ? n.time : ""}</div></div>`;
+      <div class="meta"><div class="acts"><button class="mini" data-task title="Crear una tarea pendiente con esta nota">→ Tarea</button><button class="mini" data-copy>Copiar</button><button class="mini" data-del>Borrar</button></div>${n.time ? n.time : ""}</div></div>`;
   }
   const top = list.scrollTop;
   list.innerHTML = html;
@@ -332,7 +332,14 @@ $("list").addEventListener("click", async e => {
   if (search) return api().search(search.dataset.search);
   if (!note) return;
   const n = notes.find(x => x.i === +note.dataset.i);
-  if (e.target.matches("[data-copy]")) {
+  if (e.target.matches("[data-task]")) {
+    if (e.target.dataset.done) return;  // ya se convirtió: evita tareas repetidas por doble clic
+    e.target.dataset.done = "1";
+    const id = await api().add_task(n.text);
+    e.target.textContent = `✓ Tarea #${id}`;
+    loadTasks(true);
+    setTimeout(() => { e.target.textContent = "→ Tarea"; delete e.target.dataset.done; }, 2500);
+  } else if (e.target.matches("[data-copy]")) {
     await navigator.clipboard.writeText(n.text);
     e.target.textContent = "Copiada"; setTimeout(() => e.target.textContent = "Copiar", 1200);
   } else if (e.target.matches("[data-del]")) {
