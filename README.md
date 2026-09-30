@@ -1,154 +1,295 @@
+<div align="center">
+
+<img src="recursos/asistemis.png" alt="Asistemis" width="112">
+
 # Asistemis
 
-Asistente de voz para Windows, **gratis y local**: toma notas, abre y cierra aplicaciones, busca en
-internet y, si quieres, le pasa órdenes a [Claude](https://claude.com/claude-code). La voz se
-transcribe en tu PC con [Whisper](https://github.com/SYSTRAN/faster-whisper); no se envía audio a
-ningún servidor.
+**Tu asistente de voz para Windows. Gratis, privado y 100 % en tu PC.**
 
-```
-«Asistemis, anota comprar pan para mañana… eso es todo»   → se guarda en tu bloc de notas
-«Asistemis, abrime Figma» / «ejecutá Steam» / «jugá al God of War»
-                                                          → lo abre (o lo trae si ya estaba abierto)
-«Asistemis, cerrá Chrome»                                 → cierra Chrome
-«Asistemis, busca recetas de pizza»                       → abre la búsqueda en tu navegador
-«Asistemis, ejecuta resumime las notas de hoy»            → se lo pregunta a Claude (opcional)
+Dile «*Asistemis, …*» y anota, abre tus apps y juegos, organiza tus tareas, pone música o le pasa el pedido a Claude.
+
+![Windows 11](https://img.shields.io/badge/Windows-11-0078D4?style=flat-square&logo=windows11&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.10%20·%203.11%20·%203.12-3776AB?style=flat-square&logo=python&logoColor=white)
+![Local](https://img.shields.io/badge/voz-100%25%20local-7C3AED?style=flat-square)
+![Gratis](https://img.shields.io/badge/precio-gratis-22C55E?style=flat-square)
+
+[Qué hace](#-qué-puede-hacer) · [Comandos](#%EF%B8%8F-comandos-de-voz) · [Instalación](#-instalación) · [Preguntas](#-problemas-frecuentes)
+
+</div>
+
+---
+
+```text
+🎙️  «Asistemis, anota llamar al dentista el lunes… eso es todo»   →  📝 nota guardada con fecha
+🎙️  «Asistemis, abrime Spotify»                                   →  🚀 se abre (o aparece si ya estaba abierta)
+🎙️  «Asistemis, agregá la tarea terminar el informe»              →  ✅ tarea #4 en Pendientes
+🎙️  «Asistemis, reproducime música»                               →  🎵 YouTube Music empieza a sonar
 ```
 
-## Requisitos
+## ✨ ¿Por qué Asistemis?
 
 | | |
 |---|---|
-| **Sistema** | Windows 11 (la interfaz usa el efecto de cristal de Windows 11; en Windows 10 no está probado) |
-| **Python** | 3.10, 3.11 o 3.12 (probado con 3.12) — `winget install Python.Python.3.12` |
-| **Micrófono** | cualquiera; con auriculares funciona mejor |
-| **Espacio** | ~2 GB (modelos de voz) + ~1,5 GB extra si tienes tarjeta NVIDIA |
-| **Tarjeta NVIDIA** | opcional pero recomendada: con ella Whisper transcribe en ~0,3 s; sin ella, en el procesador, unos segundos |
-| **Claude Code** | opcional, solo para las órdenes con «ejecuta» |
+| 🔒 **Privado** | Tu voz se convierte en texto **dentro de tu computadora** con [Whisper](https://github.com/SYSTRAN/faster-whisper). No se envía audio a ningún servidor. |
+| 💸 **Gratis** | Anotar, abrir, cerrar, buscar, tareas y música no cuestan nada. Claude es opcional. |
+| ⚡ **Rápido** | Con una tarjeta NVIDIA entiende lo que dices en ~0,3 segundos. |
+| 🎛️ **Siempre a mano** | Un solo atajo (**Ctrl+Alt+N**) lo enciende y lo apaga. Asígnalo a un botón del mouse y listo. |
+| 🪟 **Hecho para Windows 11** | Interfaz con efecto de cristal, icono junto al reloj y arranque automático con Windows. |
 
-## Instalación
+## 🧭 Cómo se usa, en 3 pasos
 
-1. Descarga el repositorio: botón **Code → Download ZIP** y descomprímelo, o
-   ```
-   git clone https://github.com/AzzADesigns/Asistemis.git
-   ```
-   Déjalo en una carpeta fija (por ejemplo `C:\Users\<tú>\Asistemis`): los accesos directos apuntan ahí.
-2. Haz **doble clic en `instalar.cmd`**. El instalador:
-   - crea un entorno de Python propio (`.venv`) e instala las dependencias,
-   - si detecta una tarjeta NVIDIA, instala las librerías para usarla,
-   - descarga los modelos de voz (~1,6 GB, solo la primera vez),
-   - crea accesos directos en el menú Inicio y para que arranque con Windows,
-   - y abre Asistemis.
+1. **Enciéndelo** con **Ctrl+Alt+N**. Aparece el aviso «Asistemis encendido» y una burbuja con un micrófono al costado de la pantalla.
+2. **Háblale** empezando siempre por su nombre: «*Asistemis, …*».
+3. **Listo.** Las órdenes se hacen en cuanto haces una pausa. Las notas terminan cuando dices «*eso es todo*».
 
-   Opciones (desde PowerShell): `.\instalar.ps1 -SinInicioAutomatico`, `-SinDescargarModelos`,
-   `-SinAccesos`, `-NoAbrir`.
-3. Aparece la notificación **«Asistemis encendido»** y un icono junto al reloj. Listo.
+Cuando no lo necesites, vuelve a pulsar **Ctrl+Alt+N**: el micrófono se cierra y deja de consumir recursos.
 
-> Si Windows muestra un aviso de seguridad al ejecutar `instalar.cmd`, es porque es un script
-> descargado y sin firmar; puedes abrir `instalar.ps1` con el Bloc de notas y leer qué hace antes de
-> aceptar.
+## 🚀 Qué puede hacer
 
-### Órdenes para Claude (opcional)
+| | Función | En pocas palabras |
+|:-:|---|---|
+| 📝 | **Notas por voz** | Dictas y se guardan con fecha y hora. Las ves como un chat en la ventana de Asistemis. |
+| 🚀 | **Abrir apps y juegos** | Cualquier app del menú Inicio y tu biblioteca de Steam. Si ya está abierta, la trae al frente. |
+| ❌ | **Cerrar apps** | Como pulsar la ✕ de la ventana. |
+| 🔎 | **Buscar en internet** | Abre la búsqueda de Google en tu navegador. |
+| ✅ | **Tareas** | Un tablero con *Pendientes*, *En progreso* y *Finalizadas* que manejas con la voz o con el mouse. |
+| 🎵 | **Música** | Abre YouTube Music y le da play. |
+| 🤖 | **Claude** *(opcional)* | Lo que requiere pensar (resumir, redactar, investigar) se lo pasa a Claude. |
+
+## 🗣️ Comandos de voz
+
+> Empieza siempre con **«Asistemis, …»**. No hace falta hablar como un robot: «abrí», «abrime», «iniciá» y «lanzá» funcionan igual.
+
+### 📝 Notas
+
+| Dices | Qué pasa |
+|---|---|
+| «Asistemis, **anota** comprar pan… **eso es todo**» | Guarda «comprar pan» con la fecha. |
+| «Asistemis, **apunta** …» | Lo mismo que *anota*. |
+
+La nota termina cuando dices «**eso es todo**» o «**eso sería todo**», o tras **15 segundos** de silencio.
+
+### 🚀 Apps, juegos e internet
+
+| Dices | Qué pasa |
+|---|---|
+| «Asistemis, **abrime** Chrome» | Abre Chrome o lo trae al frente si ya estaba abierto. |
+| «Asistemis, **iniciá** / **arrancá** / **lanzá** Discord» | Igual que *abrime*. |
+| «Asistemis, **jugá** al God of War» | Abre el juego (también los de Steam). |
+| «Asistemis, **ejecutá** Steam» | Si es una app, la abre sin gastar nada de Claude. |
+| «Asistemis, **cerrá** / **cerrame** Chrome» | Cierra sus ventanas. |
+| «Asistemis, **busca** recetas de pizza» | Abre la búsqueda en tu navegador. |
+
+### ✅ Tareas
+
+Cada tarea recibe un número (#1, #2, #3…) para que puedas nombrarla.
+
+| Dices | Qué pasa |
+|---|---|
+| «Asistemis, **agregá la tarea** terminar el informe» | La crea en **Pendientes**. También vale «nueva tarea …». |
+| «Asistemis, **estoy haciendo** la tarea 3» | La pasa a **En progreso**. También: «empecé», «estoy trabajando en». |
+| «Asistemis, **terminé** la tarea 3» | La pasa a **Finalizadas**. También: «finalicé», «completé». |
+| «Asistemis, **marcá la tarea 3 como pendiente**» | La devuelve a **Pendientes**. |
+| «Asistemis, **borrá** la tarea 3» | La elimina. |
+
+El número puedes decirlo como quieras: «tarea 3», «tarea tres» o «tarea número tres».
+
+### 🎵 Música
+
+| Dices | Qué pasa |
+|---|---|
+| «Asistemis, **reproducime música**» | Abre YouTube Music y pone la canción. Si ya estaba abierta, le da play. |
+| «Asistemis, **quiero escuchar música**» / «**poné** música» | Lo mismo. |
+
+> Necesita la app de **YouTube Music** instalada (en Chrome o Edge: abre music.youtube.com → menú ⋮ → *Instalar*).
+
+### 🤖 Claude *(opcional)*
+
+| Dices | Qué pasa |
+|---|---|
+| «Asistemis, **ejecutá** resumime las notas de hoy» | Como no es una app, se lo pasa a Claude. La respuesta aparece en su panel. |
+
+## ⌨️ Atajos y menú
+
+| Atajo | Qué hace |
+|---|---|
+| **Ctrl+Alt+N** | Enciende / apaga Asistemis. |
+| **Ctrl+Alt+C** | Abre el panel de Claude para escribirle. |
+| **Doble clic** en el icono junto al reloj | Abre la ventana de Asistemis. |
+| **Clic derecho** en el icono | Encender/apagar, *Anotar ahora* (sin decir «Asistemis»), Claude, archivo de notas y *Salir*. |
+
+> 💡 **Consejo:** asigna **Ctrl+Alt+N** a un botón lateral del mouse (en Logitech: *Logi Options+ → botón → Atajo de teclado*).
+
+## 🪟 La ventana de Asistemis
+
+Se abre desde el menú Inicio, con doble clic en el icono junto al reloj o abriendo Asistemis otra vez. Cerrarla **no** apaga Asistemis: sigue en segundo plano.
+
+- **Notas:** tus notas como un chat, agrupadas por día y con buscador. Puedes escribir notas nuevas, copiarlas, borrarlas o convertirlas en tarea con **→ Tarea**. También muestra lo que abriste, cerraste y buscaste (se puede ocultar).
+- **Tareas:** tablero de 3 columnas. Agrega tareas escribiendo y muévelas arrastrándolas o con las flechas de cada tarjeta.
+- **Claude:** el mismo chat que el panel de Ctrl+Alt+C.
+- **Interruptor** para encender y apagar sin usar el teclado.
+
+## 📋 Requisitos
+
+| | Necesario | Detalle |
+|---|:-:|---|
+| 💻 **Windows 11** | ✅ | El efecto de cristal es de Windows 11. En Windows 10 no está probado. |
+| 🐍 **Python 3.10, 3.11 o 3.12** | ✅ | Probado con 3.12. Se instala con `winget install Python.Python.3.12`. |
+| 🎤 **Micrófono** | ✅ | Cualquiera sirve. Con auriculares funciona mejor. |
+| 💾 **Espacio libre** | ✅ | ~2 GB para los modelos de voz, más ~1,5 GB si tienes tarjeta NVIDIA. |
+| 🌐 **Internet** | ✅ | Solo la primera vez, para descargar los modelos de voz. Después funciona sin conexión. |
+| 🎮 **Tarjeta NVIDIA** | ➖ | Opcional pero recomendada: responde en ~0,3 s. Sin ella usa el procesador y tarda unos segundos. |
+| 🤖 **Claude Code** | ➖ | Opcional. Solo para las órdenes con «ejecutá» que no son una app. |
+
+## 📦 Instalación
+
+**1. Descarga Asistemis**
+
+Botón verde **Code → Download ZIP** y descomprímelo, o con git:
+
+```powershell
+git clone https://github.com/AzzADesigns/Asistemis.git
+```
+
+Déjalo en una carpeta fija (por ejemplo `C:\Users\<tu-usuario>\Asistemis`): los accesos directos apuntan ahí.
+
+**2. Haz doble clic en `instalar.cmd`**
+
+El instalador lo hace todo solo:
+
+- ✔ prepara un entorno de Python propio e instala lo necesario,
+- ✔ si tienes tarjeta NVIDIA, instala lo que hace falta para usarla,
+- ✔ descarga los modelos de voz (~1,6 GB, solo la primera vez),
+- ✔ crea el acceso en el menú Inicio y hace que arranque con Windows,
+- ✔ y abre Asistemis.
+
+**3. ¡Listo!**
+
+Verás el aviso **«Asistemis encendido»** y un icono junto al reloj. Prueba: «*Asistemis, anota hola mundo… eso es todo*».
+
+> ⚠️ Si Windows avisa que el archivo puede ser peligroso, es porque es un script descargado de internet y sin firma. Puedes abrir `instalar.ps1` con el Bloc de notas para ver exactamente qué hace antes de aceptar.
+
+<details>
+<summary><b>Opciones avanzadas del instalador</b></summary>
+
+Desde PowerShell, dentro de la carpeta de Asistemis:
+
+```powershell
+.\instalar.ps1 -SinInicioAutomatico   # no arrancar con Windows
+.\instalar.ps1 -SinDescargarModelos   # los modelos se descargan al abrirlo la primera vez
+.\instalar.ps1 -SinAccesos            # sin accesos directos (instalación portátil)
+.\instalar.ps1 -NoAbrir               # no abrir Asistemis al terminar
+```
+
+</details>
+
+### 🤖 Activar Claude (opcional)
 
 1. Instala [Claude Code](https://claude.com/claude-code).
 2. Abre una terminal, escribe `claude` e inicia sesión con tu cuenta.
 3. Reinicia Asistemis (icono junto al reloj → *Salir*, y ábrelo desde el menú Inicio).
 
-Sin Claude Code, todo lo demás funciona igual.
+Sin Claude, todo lo demás funciona igual.
 
-## Uso
+**¿Cuánto consume?** Anotar, abrir, cerrar, buscar, tareas y música **no usan Claude (0 tokens)**. Solo consumen de tu plan las órdenes con «ejecutá» que no son una app y lo que escribas en su panel. Cada orden es un chat nuevo y Claude trabaja con permisos mínimos: puede leer y buscar archivos, buscar en la web, abrir apps y anotar, pero **no** puede borrar, modificar ni instalar nada (ver `claude/CLAUDE.md`).
 
-**Ctrl+Alt+N** enciende y apaga Asistemis. Consejo: asígnalo a un botón del mouse (en Logitech,
-*Logi Options+ → botón → Atajo de teclado*).
+## 🔒 Tus datos
 
-- **Encendido:** escucha siempre la palabra «Asistemis». Una burbuja con un micrófono al costado de
-  la pantalla te lo recuerda (y muestra el uso de la GPU; se puede arrastrar; doble clic abre Claude).
-- **Apagado:** el micrófono se cierra y los modelos salen de la tarjeta gráfica. No consume nada.
+Todo lo tuyo está en **`%LOCALAPPDATA%\Asistemis`** (`Win+R` → pega esa ruta → Enter), separado del programa:
 
-| Dices | Qué hace | Cuándo termina |
-|---|---|---|
-| «Asistemis, **anota** …» | Guarda la nota con fecha; la ves en la ventana de Asistemis | Al decir «eso es todo» / «eso sería todo», o tras 15 s de silencio |
-| «Asistemis, **abrime** / **ejecutá** / **iniciá** / **jugá** …» | Abre la app o el juego (también los de tu biblioteca de Steam), o trae su ventana si ya está abierta | En cuanto haces una pausa |
-| «Asistemis, **cerrá** Chrome» | Cierra sus ventanas, como el botón ✕ | En cuanto haces una pausa |
-| «Asistemis, **busca** …» | Abre la búsqueda de Google en tu navegador | En cuanto haces una pausa |
-| «Asistemis, **agregá la tarea** …» / «nueva tarea …» | La agrega como pendiente, con un número (#1, #2…), en la pestaña Tareas | Tras una pausa un poco más larga |
-| «Asistemis, **estoy haciendo** / **empecé** la tarea 3» | La pasa a «En progreso» | En cuanto haces una pausa |
-| «Asistemis, **terminé** / **finalicé** la tarea 3» | La pasa a «Finalizadas» | En cuanto haces una pausa |
-| «Asistemis, **marcá la tarea 3 como pendiente**» / «**borrá** la tarea 3» | La vuelve a pendientes / la borra | En cuanto haces una pausa |
-| «Asistemis, **ejecutá** …» (algo que no es una app) | Se lo pasa a Claude y la respuesta aparece en su panel | En cuanto haces una pausa |
+| Archivo | Qué guarda |
+|---|---|
+| `notas.txt` | Tus notas, una por línea, con fecha. |
+| `tareas.json` | Tus tareas. |
+| `ajustes.json` | Tus preferencias. |
+| `models\` | Los modelos de voz. |
+| `asistemis.log` | Registro técnico, útil si algo falla. |
 
-- **La ventana de Asistemis** (se abre desde el menú Inicio, con doble clic en el icono junto al reloj o
-  abriendo Asistemis otra vez): tus notas como un chat, agrupadas por día, con buscador; puedes escribir
-  notas nuevas, copiarlas y borrarlas. Muestra también lo que abriste, cerraste y buscaste (se puede
-  ocultar), tiene una pestaña con Claude y un interruptor para encender/apagar. Cerrarla no cierra
-  Asistemis. Al arrancar con Windows no se abre: queda en segundo plano.
-- **Tareas**: en la ventana, pestaña *Tareas*, un tablero con Pendientes / En progreso / Finalizadas.
-  Puedes agregarlas escribiendo y moverlas arrastrándolas o con las flechas de cada tarjeta.
-- **Ctrl+Alt+C** abre el panel de Claude, donde también puedes escribir órdenes.
-- Clic derecho en el icono junto al reloj: encender/apagar, anotar sin decir «Asistemis», abrir las
-  notas o salir.
-- Solo abre y cierra aplicaciones del menú Inicio; nunca desinstaladores ni herramientas del sistema.
+Por privacidad, Asistemis **no guarda lo que oye**. Si quieres ajustar la activación, pon `"registrar_lo_oido": true` en `ajustes.json`: guardará en el registro lo que entiende y el audio de la última nota.
 
-### Consumo de Claude
+## 🛠️ Personalizar
 
-Anotar, abrir (o «ejecutá» una app o un juego), cerrar y buscar **no usan Claude (0 tokens)**. Solo
-las órdenes con «ejecutá» que no son una app (o las escritas en el panel) consumen del límite de tu plan de Claude. Cada orden es un chat nuevo y
-Claude trabaja con permisos mínimos: puede leer y buscar archivos, buscar en la web, abrir apps y
-anotar, pero **no** borrar, modificar ni instalar nada (ver `claude/CLAUDE.md`).
+| Quiero cambiar… | Dónde |
+|---|---|
+| Cómo arranca (encendido o apagado) | Se recuerda solo: arranca como lo dejaste. |
+| Nombres de apps que entiende mal | `ALIASES`, `ALIAS_PATTERNS` y `HOTWORDS` en `herramientas.py` |
+| Palabra de activación y tiempos de espera | Constantes al principio de `asistemis.py` |
+| Cómo responde Claude | `claude/CLAUDE.md` |
 
-## Personalizar
+## ❓ Problemas frecuentes
 
-Tus datos (notas, tareas, modelos de voz, ajustes y registro) están en **`%LOCALAPPDATA%\Asistemis`**
-(`Win+R` → `%LOCALAPPDATA%\Asistemis`), separados del programa.
+<details>
+<summary><b>No me entiende cuando digo «Asistemis»</b></summary>
 
-- **Ajustes** (`ajustes.json`, se crea solo):
-  - `"encendido"`: cómo arranca (recuerda el último estado).
-  - `"registrar_lo_oido"`: `true` guarda en `asistemis.log` lo que oye y el audio de la última nota
-    (`ultima-nota.wav`) para ajustar la activación. Por privacidad viene desactivado.
-- **Nombres de apps que Whisper entiende mal**: `ALIASES`, `ALIAS_PATTERNS` y `HOTWORDS` en
-  `herramientas.py`.
-- **Palabra de activación y tiempos**: constantes al principio de `asistemis.py`.
-- **Cómo responde Claude**: `claude/CLAUDE.md`.
+Acércate al micrófono y revisa que Windows use el correcto: *Configuración → Sistema → Sonido → Entrada*. Con `"registrar_lo_oido": true` en `ajustes.json` verás en `asistemis.log` qué está entendiendo.
+</details>
 
-## Problemas frecuentes
+<details>
+<summary><b>Ctrl+Alt+N no hace nada</b></summary>
 
-- **No entiende «Asistemis»**: acércate al micrófono y revisa que Windows use el micro correcto
-  (Configuración → Sistema → Sonido → Entrada). Con `"registrar_lo_oido": true` verás en
-  `asistemis.log` qué entiende.
-- **Ctrl+Alt+N no hace nada**: puede que otro programa use ese atajo (lo dice `asistemis.log`).
-- **La primera vez tarda en arrancar**: está descargando los modelos de voz, si no lo hizo el instalador.
-- **Las órdenes con «ejecuta» dan error**: comprueba que `claude` funcione en una terminal y que
-  hayas iniciado sesión.
+Probablemente otro programa ya usa ese atajo. El archivo `asistemis.log` lo indica.
+</details>
 
-## Desinstalar
+<details>
+<summary><b>La primera vez tarda mucho en arrancar</b></summary>
 
-Icono junto al reloj → *Salir*. Después borra:
-- la carpeta del programa (la del repositorio, o `%LOCALAPPDATA%\Programs\Asistemis` si instalaste el .exe),
-- tus datos (notas, tareas) y modelos de voz: `%LOCALAPPDATA%\Asistemis`,
-- los accesos directos `Asistemis.lnk` del menú Inicio y de la carpeta de inicio (`Win+R` → `shell:startup`).
+Está descargando los modelos de voz (~1,6 GB). Pasa una sola vez.
+</details>
 
-Tus notas y tareas están en `%LOCALAPPDATA%\Asistemis` (`notas.txt`, `tareas.json`): si quieres
-conservarlas, cópialas antes de borrar esa carpeta.
+<details>
+<summary><b>No abre una app que tengo instalada</b></summary>
 
-## Compilar como .exe
+Asistemis solo abre lo que aparece en el menú Inicio o en tu biblioteca de Steam, y nunca desinstaladores ni herramientas del sistema. Si Whisper entiende mal el nombre, agrégalo en `ALIASES` dentro de `herramientas.py`.
+</details>
 
-```
+<details>
+<summary><b>«Reproducime música» no hace nada</b></summary>
+
+Instala YouTube Music como app desde Chrome o Edge (music.youtube.com → menú ⋮ → *Instalar*).
+</details>
+
+<details>
+<summary><b>Las órdenes para Claude dan error</b></summary>
+
+Comprueba que `claude` funcione en una terminal y que hayas iniciado sesión.
+</details>
+
+## 🗑️ Desinstalar
+
+1. Icono junto al reloj → **Salir**.
+2. Borra la carpeta del programa (la que descargaste, o `%LOCALAPPDATA%\Programs\Asistemis` si usaste el .exe).
+3. Borra los accesos `Asistemis.lnk` del menú Inicio y de la carpeta de inicio (`Win+R` → `shell:startup`).
+4. Si ya no quieres tus notas ni los modelos de voz, borra `%LOCALAPPDATA%\Asistemis`. **Copia antes `notas.txt` y `tareas.json` si quieres conservarlos.**
+
+---
+
+<details>
+<summary><b>👩‍💻 Para desarrolladores</b></summary>
+
+### Compilar como .exe
+
+```powershell
 powershell -ExecutionPolicy Bypass -File compilar.ps1            # crea dist\Asistemis\Asistemis.exe
 powershell -ExecutionPolicy Bypass -File compilar.ps1 -Instalar  # y lo instala en %LOCALAPPDATA%\Programs\Asistemis
 ```
 
-Requiere haber ejecutado antes `instalar.cmd`. El resultado es una carpeta con `Asistemis.exe` (con su
-icono; en el Administrador de tareas aparece como «Asistemis») y `herramientas.exe` (la usa Claude). No
-necesita Python para funcionar. Pesa ~2,3 GB con las librerías de NVIDIA; los modelos de voz se
-descargan aparte la primera vez.
+Requiere haber ejecutado antes `instalar.cmd`. El resultado es una carpeta con `Asistemis.exe` y `herramientas.exe` (la usa Claude) que no necesita Python. Pesa ~2,3 GB con las librerías de NVIDIA. Los modelos de voz se descargan aparte la primera vez.
 
-## Cómo está hecho
+### Cómo está hecho
 
 | Archivo | Qué hace |
 |---|---|
-| `asistemis.py` | Micrófono, detección de «Asistemis», transcripción (Whisper) y qué hacer con lo dicho |
-| `herramientas.py` | Abrir/cerrar apps, buscar y guardar notas (también lo usa Claude) |
+| `asistemis.py` | Micrófono, detección de «Asistemis», transcripción con Whisper y qué hacer con lo dicho |
+| `herramientas.py` | Abrir y cerrar apps, Steam, búsquedas, música, notas y tareas (también lo usa Claude) |
 | `ordenes.py` | Conexión con Claude Code (`claude -p`) |
-| `interfaz.py`, `ui/` | Interfaz en HTML/CSS (pywebview + cristal de Windows 11) |
+| `interfaz.py`, `ui/` | Interfaz en HTML/CSS con pywebview y el cristal de Windows 11 |
 | `claude/` | Carpeta de trabajo de Claude: instrucciones y comandos permitidos |
 | `recursos/` | Icono y datos de versión del .exe |
-| `asistemis.spec`, `compilar.ps1` | Receta y script para compilar el .exe (PyInstaller) |
+| `instalar.cmd`, `instalar.ps1` | Instalador desde el código |
+| `asistemis.spec`, `compilar.ps1` | Receta y script para compilar el .exe con PyInstaller |
+
+</details>
+
+<div align="center">
+<sub>Hecho con 🎙️ y Whisper · Funciona en tu PC, no en la nube</sub>
+</div>
