@@ -18,8 +18,12 @@ import threading
 import time
 from ctypes import wintypes
 
+import base64
+import subprocess
+
 import webview
 
+import herramientas
 from herramientas import APP_DIR
 
 log = logging.getLogger("asistemis")
@@ -29,13 +33,14 @@ UI_DIR = APP_DIR / "ui"
 user32, dwmapi = ctypes.WinDLL("user32"), ctypes.windll.dwmapi
 
 # tamaños en píxeles CSS (se multiplican por la escala de Windows)
-SIZES = {"toast": (340, 72), "mic": (64, 64), "rec": (380, 168), "claude": (440, 640)}
+SIZES = {"toast": (340, 72), "mic": (64, 64), "rec": (380, 168), "claude": (440, 640), "main": (960, 680)}
 MARGIN = 16
 TOAST_SECONDS = 2.6
 QUITTING = threading.Event()  # solo con esto activo se dejan cerrar las ventanas
 GPU_EVERY = 1.0  # s entre lecturas del uso de la GPU (solo con la burbuja visible)
 
-HWND_TOPMOST = wintypes.HWND(-1)
+HWND_TOPMOST, HWND_NOTOPMOST, HWND_TOP = wintypes.HWND(-1), wintypes.HWND(-2), wintypes.HWND(0)
+SW_MINIMIZE, SW_RESTORE = 6, 9
 # tipos explícitos: en 64 bits, pasar -1 como int corrompe el identificador de ventana
 user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int,
                                 ctypes.c_int, wintypes.UINT]
@@ -73,21 +78,27 @@ def page(name):
     """HTML de una ventana con la hoja de estilos común incrustada."""
     css = (UI_DIR / "base.css").read_text(encoding="utf-8")
     html = (UI_DIR / f"{name}.html").read_text(encoding="utf-8")
-    return html.replace("/*BASE*/", css)
+    html = html.replace("/*BASE*/", css)
+    if "%ICON%" in html:
+        icon = base64.b64encode((APP_DIR / "recursos" / "asistemis.png").read_bytes()).decode()
+        html = html.replace("%ICON%", "data:image/png;base64," + icon)
+    return html
 
 
 class Glass:
-    """Una ventana webview con cristal: transparente, sin barra de tareas, siempre encima."""
+    """Una ventana webview con cristal: transparente, sin barra de tareas, siempre encima.
+    Con app=True es la ventana principal: con botón en la barra de tareas y sin estar siempre encima."""
 
-    def __init__(self, name, js_api=None, focus=False, round_=False):
-        self.name, self.round = name, round_
+    def __init__(self, name, js_api=None, focus=False, round_=False, app=False):
+        self.name, self.round, self.app = name, round_, app
+        self.z = HWND_TOP if app else HWND_TOPMOST
         self.hwnd = None
         self.visible = False
         self.ready = threading.Event()
         w, h = SIZES[name]
         self.win = webview.create_window(
             f"Asistemis {name}", html=page(name), js_api=js_api, width=w, height=h, x=-20000, y=-20000,
-            frameless=True, easy_drag=False, on_top=True, transparent=True, focus=focus,
+            frameless=True, easy_drag=False, on_top=not app, transparent=True, focus=focus,
             resizable=False, min_size=(10, 10), shadow=False)
         self.win.events.loaded += self._on_loaded
         self.win.events.closing += self._on_closing
@@ -116,7 +127,14 @@ class Glass:
             # (si se oculta ya marcada, Windows deja el botón huérfano)
             user32.ShowWindow(hwnd, SW_HIDE)
             ex = user32.GetWindowLongW(hwnd, -20)
-            user32.SetWindowLongW(hwnd, -20, (ex | 0x80) & ~0x40000)  # WS_EX_TOOLWINDOW, sin WS_EX_APPWINDOW
+            if self.app:  # ventana principal: botón en la barra de tareas con el icono de Asistemis
+                user32.SetWindowLongW(hwnd, -20, (ex | 0x40000) & ~0x80)
+                try:
+                    form.Icon = D.Icon(str(APP_DIR / "recursos" / "asistemis.ico"))
+                except Exception:
+                    pass
+            else:
+                user32.SetWindowLongW(hwnd, -20, (ex | 0x80) & ~0x40000)  # WS_EX_TOOLWINDOW, sin WS_EX_APPWINDOW
             m = MARGINS(-1, -1, -1, -1)
             dwmapi.DwmExtendFrameIntoClientArea(wintypes.HWND(hwnd), ctypes.byref(m))
             _dwm(hwnd, 20, 0)   # tema claro
@@ -136,15 +154,24 @@ class Glass:
     def place(self, x, y):
         self.pos = (int(x), int(y))
         if self.visible:
-            user32.SetWindowPos(self.hwnd, HWND_TOPMOST, *self.pos, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE)
+            user32.SetWindowPos(self.hwnd, self.z, *self.pos, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE)
 
     def show(self, activate=False):
         self.ready.wait()
-        self.visible = True
-        user32.SetWindowPos(self.hwnd, HWND_TOPMOST, *self.pos, 0, 0,
-                            SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW)
+        if self.visible and user32.IsIconic(self.hwnd):  # minimizada: se restaura donde estaba
+            user32.ShowWindow(self.hwnd, SW_RESTORE)
+        else:
+            self.visible = True
+            user32.SetWindowPos(self.hwnd, self.z, *self.pos, 0, 0,
+                                SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW)
         if activate:
-            user32.SetForegroundWindow(self.hwnd)
+            if self.app:  # al frente aunque Windows no deje activarla desde segundo plano
+                user32.SetWindowPos(self.hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE)
+                user32.SetWindowPos(self.hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE)
+            herramientas._focus(self.hwnd)
+
+    def minimize(self):
+        user32.ShowWindow(self.hwnd, SW_MINIMIZE)
 
     def hide(self):
         if self.hwnd and self.visible:
@@ -198,6 +225,7 @@ class Interface:
         self.rec = Glass("rec", js_api=RecApi(engine))
         self.chat = chat_api
         self.claude = Glass("claude", js_api=chat_api, focus=True)
+        self.main = Glass("main", js_api=MainApi(self, engine, chat_api), focus=True, app=True)
         self.on = False
         self.hide_rec_at = None
         self.hide_toast_at = None
@@ -207,7 +235,7 @@ class Interface:
 
     def start(self):
         """Se llama desde webview.start: coloca las ventanas y atiende la cola."""
-        for g in (self.toast, self.mic, self.rec, self.claude):
+        for g in (self.toast, self.mic, self.rec, self.claude, self.main):
             g.ready.wait()
         left, top, right, bottom = work_area()
         s = self.toast.scale
@@ -216,6 +244,7 @@ class Interface:
         self.rec.place(right - self.rec.size[0] - m, bottom - self.rec.size[1] - m)
         self.mic.place(right - self.mic.size[0] - round(10 * s), top + (bottom - top) // 2 - self.mic.size[1] // 2)
         self.claude.place(right - self.claude.size[0] - m, top + m)
+        self.main.place((left + right - self.main.size[0]) // 2, (top + bottom - self.main.size[1]) // 2)
         threading.Thread(target=self._gpu_loop, daemon=True).start()
         self._loop()
 
@@ -230,7 +259,7 @@ class Interface:
                 levels.append(args[0])
             elif msg == "quit":
                 QUITTING.set()
-                for g in (self.toast, self.mic, self.rec, self.claude):
+                for g in (self.toast, self.mic, self.rec, self.claude, self.main):
                     g.win.destroy()
                 return
             elif msg:
@@ -262,14 +291,20 @@ class Interface:
             self.toast.show()
             self.hide_toast_at = time.monotonic() + TOAST_SECONDS
             self.mic.js("state", "idle")
+            self.main.js("setPower", self.on)
             if not self.on:
                 self.mic.hide()
         elif msg == "panel":
             self.show_claude()
         elif msg == "hide_claude":
             self.claude.hide()
-        elif msg == "chat":  # mensajes del chat con Claude
+        elif msg == "main":
+            self.main.show(activate=True)
+        elif msg == "hide_main":
+            self.main.hide()
+        elif msg == "chat":  # mensajes del chat con Claude: el panel y la pestaña de la ventana principal
             self.claude.js(*args)
+            self.main.js(*args)
         else:
             self._rec(msg, args)
 
@@ -312,6 +347,51 @@ class Interface:
                 value = self.gpu.percent()
                 if value is not None:
                     self.mic.js("gpu", value)
+
+
+class MainApi:
+    """Lo que puede pedir la ventana principal (notas, encendido y Claude)."""
+
+    def __init__(self, iface, engine, chat):
+        self._iface, self._engine, self._chat = iface, engine, chat
+
+    def notes(self):
+        return herramientas.read_notes()
+
+    def notes_version(self):
+        return herramientas.notes_version()
+
+    def add_note(self, text):
+        if text.strip():
+            herramientas.save_note(text.strip())
+
+    def delete_note(self, index, raw):
+        return herramientas.delete_note(index, raw)
+
+    def search(self, text):
+        herramientas.web_search(text)
+
+    def open_file(self):
+        herramientas.NOTES_FILE.touch(exist_ok=True)
+        subprocess.Popen(["notepad.exe", str(herramientas.NOTES_FILE)])
+
+    def power(self):
+        self._engine.commands.put("power")
+
+    def power_state(self):
+        return bool(self._engine.wake_by_voice)
+
+    def claude_send(self, text):
+        self._chat.submit(text, "escrita")
+
+    def claude_new(self):
+        self._chat.new_conversation()
+
+    def minimize(self):
+        self._iface.main.minimize()
+
+    def close(self):
+        self._iface.ui.put(("hide_main",))
 
 
 class MicApi:

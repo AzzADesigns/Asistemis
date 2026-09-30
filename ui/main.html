@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Asistemis</title>
+<style>
+/*BASE*/
+.app { display: flex; flex-direction: column; }
+
+/* barra de título */
+.bar { display: flex; align-items: center; gap: 10px; height: 52px; padding: 0 10px 0 16px; flex: none; }
+.brand { display: flex; align-items: center; gap: 10px; font: 600 15px "Segoe UI Variable Display", "Segoe UI", sans-serif; }
+.brand img { width: 26px; height: 26px; border-radius: 7px; pointer-events: none; }
+.grow { flex: 1; align-self: stretch; }
+.tabs { display: flex; padding: 3px; gap: 2px; border-radius: 12px; background: rgba(15,17,22,.06); }
+.tabs button { height: 28px; padding: 0 16px; border-radius: 9px; background: transparent; font-weight: 600; font-size: 12.5px; color: var(--muted); }
+.tabs button.on { background: #fff; color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+.power { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 12px 0 10px; border-radius: 15px;
+  background: rgba(255,255,255,.7); box-shadow: inset 0 0 0 1px var(--line); font-weight: 600; font-size: 12px; }
+.power:hover { background: #fff; }
+.power .dot { width: 8px; height: 8px; }
+.win { width: 34px; height: 30px; border-radius: 8px; background: transparent; color: var(--muted); display: grid; place-items: center; }
+.win:hover { background: rgba(15,17,22,.07); color: var(--ink); }
+.win.close:hover { background: #e5484d; color: #fff; }
+
+.view { flex: 1; display: none; flex-direction: column; min-height: 0; }
+.view.on { display: flex; }
+
+/* herramientas de la lista */
+.tools { display: flex; align-items: center; gap: 10px; padding: 4px 16px 10px; }
+.search { flex: 1; display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 12px; border-radius: 17px;
+  background: rgba(255,255,255,.7); box-shadow: inset 0 0 0 1px var(--line); color: var(--faint); }
+.search input { flex: 1; border: 0; outline: 0; background: transparent; font: inherit; color: var(--ink); user-select: text; }
+.chip { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: 15px; font-size: 12px;
+  font-weight: 600; color: var(--muted); background: transparent; box-shadow: inset 0 0 0 1px var(--line); }
+.chip.on { color: var(--ink); background: rgba(255,255,255,.75); }
+.count { font-size: 12px; color: var(--faint); min-width: 64px; text-align: right; }
+
+/* lista tipo chat */
+.list { flex: 1; overflow-y: auto; padding: 6px 22px 14px; display: flex; flex-direction: column; gap: 6px; user-select: text; }
+.list::-webkit-scrollbar { width: 10px; }
+.list::-webkit-scrollbar-thumb { background: rgba(0,0,0,.15); border-radius: 5px; border: 3px solid transparent; background-clip: padding-box; }
+.day { align-self: center; margin: 14px 0 6px; padding: 3px 12px; border-radius: 10px; font-size: 11.5px; font-weight: 600;
+  color: var(--muted); background: rgba(255,255,255,.6); box-shadow: inset 0 0 0 1px var(--line); text-transform: capitalize; }
+.note { align-self: flex-end; max-width: 72%; display: flex; flex-direction: column; align-items: flex-end; position: relative; }
+.bubble { padding: 9px 14px; border-radius: 16px 16px 5px 16px; background: var(--ink); color: #fff; line-height: 1.5;
+  white-space: pre-wrap; word-wrap: break-word; box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+.note.order .bubble { background: rgba(124,92,255,.12); color: var(--ink); box-shadow: inset 0 0 0 1px rgba(124,92,255,.25); }
+.label { font-size: 10.5px; font-weight: 700; color: var(--violet); margin-bottom: 2px; letter-spacing: .02em; }
+.meta { display: flex; align-items: center; gap: 4px; margin-top: 3px; font-size: 11px; color: var(--faint); min-height: 22px; }
+.acts { display: flex; gap: 2px; opacity: 0; transition: opacity .15s; }
+.note:hover .acts { opacity: 1; }
+.acts button { height: 22px; padding: 0 8px; border-radius: 11px; background: rgba(255,255,255,.75); font-size: 11px; font-weight: 600;
+  color: var(--muted); box-shadow: inset 0 0 0 1px var(--line); }
+.acts button:hover { color: var(--ink); background: #fff; }
+.acts button.danger { color: #fff; background: var(--red); box-shadow: none; }
+.action { align-self: center; display: flex; align-items: center; gap: 7px; padding: 4px 12px; border-radius: 12px;
+  font-size: 12px; color: var(--muted); }
+.action svg { flex: none; opacity: .7; }
+.action b { color: var(--ink); font-weight: 600; }
+.action .t { color: var(--faint); font-size: 11px; }
+.action.link { cursor: pointer; }
+.action.link:hover { background: rgba(255,255,255,.6); }
+mark { background: rgba(250,204,21,.45); color: inherit; border-radius: 3px; padding: 0 1px; }
+.note mark { background: rgba(250,204,21,.7); color: var(--ink); }
+.empty { margin: auto; text-align: center; color: var(--muted); max-width: 320px; }
+.empty b { display: block; color: var(--ink); font: 600 16px "Segoe UI Variable Display", "Segoe UI", sans-serif; margin-bottom: 4px; }
+
+/* escribir */
+.compose { margin: 0 16px 14px; display: flex; align-items: flex-end; gap: 8px; padding: 8px 8px 8px 16px;
+  background: var(--glass-strong); border-radius: 20px; box-shadow: inset 0 0 0 1px var(--line), 0 2px 10px rgba(0,0,0,.05); flex: none; }
+textarea { flex: 1; border: 0; outline: 0; resize: none; background: transparent; font: inherit; font-size: 13.5px; color: var(--ink);
+  max-height: 140px; padding: 7px 0; user-select: text; }
+textarea::placeholder { color: var(--faint); }
+.send { width: 36px; height: 36px; border-radius: 18px; background: var(--ink); color: #fff; display: grid; place-items: center; flex: none; }
+.send:disabled { opacity: .3; cursor: default; }
+
+/* Claude (igual que el panel) */
+.chat { flex: 1; overflow-y: auto; padding: 6px 22px 12px; display: flex; flex-direction: column; gap: 10px; user-select: text; }
+.msg { max-width: 76%; padding: 9px 14px; border-radius: 16px; line-height: 1.5; white-space: pre-wrap; word-wrap: break-word; animation: enter .2s both; }
+.msg.you { align-self: flex-end; background: var(--ink); color: #fff; border-bottom-right-radius: 5px; }
+.msg.claude { align-self: flex-start; background: var(--glass-strong); box-shadow: inset 0 0 0 1px var(--line); border-bottom-left-radius: 5px; white-space: normal; }
+.msg.error { align-self: flex-start; background: rgba(229,72,77,.1); color: #b4232a; }
+.msg.meta { align-self: center; background: none; color: var(--faint); font-size: 11.5px; padding: 2px; }
+.src { display: block; font-size: 10.5px; opacity: .6; margin-bottom: 2px; }
+.msg code { font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; background: rgba(0,0,0,.06); padding: 1px 4px; border-radius: 4px; }
+.msg p { margin: 0 0 6px; } .msg p:last-child { margin: 0; }
+.msg ul { margin: 2px 0 6px; padding-left: 18px; } .msg ul:last-child { margin-bottom: 0; }
+.status { display: flex; align-items: center; gap: 7px; height: 30px; padding: 0 12px 0 10px; border-radius: 15px;
+  background: rgba(255,255,255,.6); box-shadow: inset 0 0 0 1px var(--line); font-size: 12px; color: var(--muted); }
+.status .dot { width: 7px; height: 7px; box-shadow: none; }
+</style>
+</head>
+<body>
+<div class="glass app">
+  <header class="bar">
+    <div class="brand pywebview-drag-region"><img src="%ICON%" alt=""><span class="pywebview-drag-region">Asistemis</span></div>
+    <div class="grow pywebview-drag-region"></div>
+    <div class="tabs">
+      <button data-tab="notes" class="on">Notas</button>
+      <button data-tab="claude">Claude</button>
+    </div>
+    <div class="grow pywebview-drag-region"></div>
+    <button class="power" id="power" title="Encender / apagar (Ctrl+Alt+N)"><span class="dot" id="pdot"></span><span id="ptext">…</span></button>
+    <button class="win" title="Minimizar" onclick="pywebview.api.minimize()">
+      <svg width="12" height="12" viewBox="0 0 12 12"><path d="M1 6h10" stroke="currentColor" stroke-width="1.4"/></svg></button>
+    <button class="win close" title="Cerrar (Asistemis sigue funcionando)" onclick="pywebview.api.close()">
+      <svg width="12" height="12" viewBox="0 0 12 12"><path d="M1.5 1.5l9 9M10.5 1.5l-9 9" stroke="currentColor" stroke-width="1.4"/></svg></button>
+  </header>
+
+  <section class="view on" id="view-notes">
+    <div class="tools">
+      <label class="search">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+        <input id="q" placeholder="Buscar en tus notas" autocomplete="off">
+      </label>
+      <button class="chip on" id="acts" title="Mostrar también lo que abriste, cerraste, buscaste y le pediste a Claude">Acciones</button>
+      <span class="count" id="count"></span>
+      <button class="chip" onclick="pywebview.api.open_file()" title="Abrir notas-asistemis.txt en el Bloc de notas">Archivo</button>
+    </div>
+    <div class="list" id="list"></div>
+    <div class="compose">
+      <textarea id="note" rows="1" placeholder="Escribe una nota…"></textarea>
+      <button class="send" id="addNote" title="Guardar nota" disabled>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+      </button>
+    </div>
+  </section>
+
+  <section class="view" id="view-claude">
+    <div class="tools">
+      <div class="status"><div class="dot ok" id="sdot"></div><span id="stext">Listo</span></div>
+      <div class="grow"></div>
+      <button class="chip" onclick="pywebview.api.claude_new()">Nueva conversación</button>
+    </div>
+    <div class="chat" id="chat">
+      <div class="empty" id="cempty"><b>¿Qué necesitas?</b>Di «Asistemis, ejecutá…» o escribe una orden abajo.</div>
+    </div>
+    <div class="compose">
+      <textarea id="order" rows="1" placeholder="Escribe una orden para Claude…"></textarea>
+      <button class="send" id="sendOrder" title="Enviar" disabled>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+      </button>
+    </div>
+  </section>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => s.replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+let notes = [], version = null, showActions = true;
+
+/* ---------- pestañas y encendido ---------- */
+document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => {
+  document.querySelectorAll(".tabs button").forEach(x => x.classList.toggle("on", x === b));
+  $("view-notes").classList.toggle("on", b.dataset.tab === "notes");
+  $("view-claude").classList.toggle("on", b.dataset.tab === "claude");
+  (b.dataset.tab === "notes" ? $("note") : $("order")).focus();
+});
+function showTab(tab) { document.querySelector(`.tabs button[data-tab="${tab}"]`).click(); }
+function setPower(on) {
+  $("pdot").className = "dot" + (on ? " on" : "");
+  $("ptext").textContent = on ? "Encendido" : "Apagado";
+}
+$("power").onclick = () => pywebview.api.power();
+
+/* ---------- notas ---------- */
+const ICONS = {
+  abrir: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3h7v7M10 14L21 3M19 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"/></svg>',
+  cerrar: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+  buscar: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>',
+};
+const VERBS = {abrir: "Abriste", cerrar: "Cerraste", buscar: "Buscaste"};
+
+function dayLabel(iso) {
+  if (!iso) return "Sin fecha";
+  const d = new Date(iso + "T12:00:00"), today = new Date(); today.setHours(12, 0, 0, 0);
+  const diff = Math.round((today - d) / 864e5);
+  if (diff === 0) return "Hoy";
+  if (diff === 1) return "Ayer";
+  return d.toLocaleDateString("es", {weekday: "long", day: "numeric", month: "long",
+    ...(d.getFullYear() !== today.getFullYear() ? {year: "numeric"} : {})});
+}
+function highlight(text, q) {
+  if (!q) return esc(text);
+  const i = text.toLowerCase().indexOf(q);
+  return i < 0 ? esc(text) : esc(text.slice(0, i)) + "<mark>" + esc(text.slice(i, i + q.length)) + "</mark>" + highlight(text.slice(i + q.length), q);
+}
+
+function render(keepScroll) {
+  const list = $("list"), q = $("q").value.trim().toLowerCase();
+  const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
+  const shown = notes.filter(n => (showActions || !n.tag) && (!q || n.text.toLowerCase().includes(q)));
+  const own = notes.filter(n => !n.tag).length;
+  $("count").textContent = q ? `${shown.length} de ${notes.length}` : `${own} nota${own === 1 ? "" : "s"}`;
+  if (!shown.length) {
+    list.innerHTML = q ? `<div class="empty"><b>Sin resultados</b>No hay notas con «${esc(q)}».</div>`
+                       : `<div class="empty"><b>Todavía no hay notas</b>Di «Asistemis, anota…» o escribe una abajo.</div>`;
+    return;
+  }
+  let html = "", day = null;
+  for (const n of shown) {
+    if (n.date !== day) { day = n.date; html += `<div class="day">${dayLabel(day)}</div>`; }
+    const t = n.time ? `<span class="t">${n.time}</span>` : "";
+    if (VERBS[n.tag]) {
+      html += `<div class="action${n.tag === "buscar" ? " link" : ""}" ${n.tag === "buscar" ? `data-search="${esc(n.text)}" title="Buscar de nuevo"` : ""}>
+        ${ICONS[n.tag]}<span>${VERBS[n.tag]} <b>${highlight(n.text, q)}</b></span>${t}</div>`;
+    } else {
+      const order = n.tag.startsWith("orden");
+      const label = order ? `<span class="label">CLAUDE · ${n.tag.includes("voz") ? "POR VOZ" : "ESCRITA"}</span>` : "";
+      html += `<div class="note${order ? " order" : ""}" data-i="${n.i}">
+        <div class="bubble">${label}${label ? "<br>" : ""}${highlight(n.text, q)}</div>
+        <div class="meta"><div class="acts"><button data-copy>Copiar</button><button data-del>Borrar</button></div>${t}</div></div>`;
+    }
+  }
+  const top = list.scrollTop;
+  list.innerHTML = html;
+  list.scrollTop = keepScroll && !nearBottom ? top : list.scrollHeight;
+}
+
+async function load(force) {
+  const v = await pywebview.api.notes_version();
+  if (!force && v === version) return;
+  version = v;
+  notes = await pywebview.api.notes();
+  render(!force);
+}
+
+$("list").addEventListener("click", async e => {
+  const note = e.target.closest(".note"), search = e.target.closest("[data-search]");
+  if (search) return pywebview.api.search(search.dataset.search);
+  if (!note) return;
+  const n = notes.find(x => x.i === +note.dataset.i);
+  if (e.target.matches("[data-copy]")) {
+    await navigator.clipboard.writeText(n.text);
+    e.target.textContent = "Copiada"; setTimeout(() => e.target.textContent = "Copiar", 1200);
+  } else if (e.target.matches("[data-del]")) {
+    if (!e.target.classList.contains("danger")) {  // primer clic: pide confirmación
+      e.target.classList.add("danger"); e.target.textContent = "¿Borrar?";
+      setTimeout(() => { e.target.classList.remove("danger"); e.target.textContent = "Borrar"; }, 3000);
+      return;
+    }
+    await pywebview.api.delete_note(n.i, n.raw);
+    load(true);
+  }
+});
+$("q").addEventListener("input", () => render(false));
+$("acts").onclick = () => { showActions = !showActions; $("acts").classList.toggle("on", showActions); render(false); };
+
+/* ---------- escribir (notas y órdenes) ---------- */
+function composer(input, button, submit) {
+  const resize = () => { input.style.height = "auto"; input.style.height = input.scrollHeight + "px"; button.disabled = !input.value.trim(); };
+  const go = () => { const text = input.value.trim(); if (!text) return; input.value = ""; resize(); submit(text); };
+  input.addEventListener("input", resize);
+  input.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); go(); } });
+  button.addEventListener("click", go);
+}
+composer($("note"), $("addNote"), async text => { await pywebview.api.add_note(text); load(true); });
+composer($("order"), $("sendOrder"), text => pywebview.api.claude_send(text));
+
+/* ---------- Claude (espejo del panel) ---------- */
+function markdown(text) {
+  const inline = s => esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code>$1</code>");
+  const item = /^\s*(?:[-*•]|\d+[.)])\s+/;
+  return text.trim().split(/\n{2,}/).map(block => {
+    let html = "", list = [], para = [];
+    const flush = () => {
+      if (para.length) html += "<p>" + para.map(inline).join("<br>") + "</p>";
+      if (list.length) html += "<ul>" + list.map(l => "<li>" + inline(l) + "</li>").join("") + "</ul>";
+      para = []; list = [];
+    };
+    for (const line of block.split("\n")) {
+      if (item.test(line)) { if (para.length) flush(); list.push(line.replace(item, "")); }
+      else { if (list.length) flush(); para.push(line); }
+    }
+    flush();
+    return html;
+  }).join("");
+}
+function addMessage(role, text, source) {
+  $("cempty")?.remove();
+  const m = document.createElement("div");
+  m.className = "msg " + role;
+  if (role === "claude") m.innerHTML = markdown(text);
+  else if (role === "you") m.innerHTML = (source ? `<span class="src">${esc(source)}</span>` : "") + esc(text);
+  else m.textContent = text;
+  $("chat").appendChild(m);
+  $("chat").scrollTop = $("chat").scrollHeight;
+}
+function setStatus(text, kind) { $("stext").textContent = text; $("sdot").className = "dot " + kind; }
+function focusInput() {}
+
+/* ---------- arranque ---------- */
+window.addEventListener("pywebviewready", async () => {
+  setPower(await pywebview.api.power_state());
+  load(true);
+  setInterval(() => { if (!document.hidden) load(false); }, 1500);  // notas nuevas por voz o de Claude
+});
+document.addEventListener("keydown", e => { if (e.key === "Escape") pywebview.api.close(); });
+</script>
+</body>
+</html>

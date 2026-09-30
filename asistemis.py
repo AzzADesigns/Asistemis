@@ -647,6 +647,22 @@ def tray_image():
         return img
 
 
+def listen_for_others(lock, ui):
+    """Otra copia de Asistemis que se abrió (menú Inicio, doble clic) pide mostrar la ventana."""
+    while True:
+        try:
+            conn, _ = lock.accept()
+        except OSError:
+            return
+        with conn:
+            conn.settimeout(2)
+            try:
+                if conn.recv(16) == b"mostrar":
+                    ui.put(("main",))
+            except OSError:
+                pass
+
+
 def main():
     # empaquetado como .exe sin consola no hay stdout/stderr: la barra de descarga de los modelos fallaría
     if sys.stdout is None or sys.stderr is None:
@@ -655,13 +671,23 @@ def main():
                         format="%(asctime)s %(levelname)s %(message)s")
 
     # una sola instancia: el puerto queda ocupado mientras Asistemis está abierto
+    # una sola instancia: el puerto queda ocupado mientras Asistemis está abierto. Si ya lo está,
+    # abrirlo otra vez (menú Inicio, doble clic) solo le pide a esa instancia que muestre su ventana.
+    background = "--segundo-plano" in sys.argv  # así arranca con Windows: sin abrir la ventana
     lock = socket.socket()
     try:
         lock.bind(("127.0.0.1", 47651))
     except OSError:
-        ctypes.windll.user32.MessageBoxW(None, "Asistemis ya está funcionando (icono junto al reloj).",
-                                         "Asistemis", 0x40)
+        if not background:
+            try:
+                # esta copia la abrió el usuario: puede ceder el permiso de ponerse al frente
+                ctypes.windll.user32.AllowSetForegroundWindow(-1)  # ASFW_ANY
+                with socket.create_connection(("127.0.0.1", 47651), timeout=2) as other:
+                    other.sendall(b"mostrar")
+            except OSError:
+                pass
         return
+    lock.listen(4)
 
     # identidad propia para Windows: "Asistemis", no "Python" (barra de tareas, notificaciones)
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Asistemis")
@@ -683,11 +709,12 @@ def main():
         ui.put(("quit",))
 
     tray = pystray.Icon("asistemis", tray_image(), "Asistemis", menu=pystray.Menu(
+        pystray.MenuItem("Abrir Asistemis", lambda: ui.put(("main",)), default=True),
         pystray.MenuItem("Encendido (Ctrl+Alt+N)", lambda: engine.commands.put("power"),
-                         checked=lambda item: engine.wake_by_voice, default=True),
+                         checked=lambda item: engine.wake_by_voice),
         pystray.MenuItem("Anotar ahora", lambda: engine.commands.put("toggle")),
         pystray.MenuItem("Claude (Ctrl+Alt+C)", lambda: ui.put(("panel",))),
-        pystray.MenuItem("Abrir notas", open_notes),
+        pystray.MenuItem("Archivo de notas", open_notes),
         pystray.MenuItem("Salir", quit_app),
     ))
     tray.run_detached()
@@ -696,6 +723,9 @@ def main():
     hotkeys.start()
     engine.start()
     log.info("Asistemis iniciado")
+    threading.Thread(target=listen_for_others, args=(lock, ui), daemon=True).start()
+    if not background:
+        ui.put(("main",))
 
     import webview
     webview.start(interface.start)  # hasta que se cierran las ventanas (Salir)
@@ -707,8 +737,8 @@ def main():
         # la interfaz se cerró sola: mejor reiniciar Asistemis entero que dejarlo a medias
         log.error("la interfaz se cerró inesperadamente; reiniciando Asistemis")
         lock.close()
-        subprocess.Popen([sys.executable] if FROZEN else [sys.executable, str(Path(__file__).resolve())],
-                         cwd=str(APP_DIR))
+        subprocess.Popen(([sys.executable] if FROZEN else [sys.executable, str(Path(__file__).resolve())])
+                         + ["--segundo-plano"], cwd=str(APP_DIR))
     logging.shutdown()
     os._exit(0)  # sin esperar a hilos que quedaron bloqueados
 

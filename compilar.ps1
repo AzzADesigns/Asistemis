@@ -39,6 +39,7 @@ foreach ($carpeta in $carpetas) {
     $acceso.WorkingDirectory = $destino
     $acceso.IconLocation = (Join-Path $destino 'Asistemis.exe') + ',0'
     $acceso.Description = 'Asistemis: notas y órdenes por voz'
+    if ($carpeta -eq [Environment]::GetFolderPath('Startup')) { $acceso.Arguments = ($acceso.Arguments + ' --segundo-plano').Trim() }
     $acceso.Save()
 }
 Start-Process (Join-Path $destino 'Asistemis.exe')

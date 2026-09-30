@@ -51,6 +51,47 @@ def save_note(note, tag=""):
         f.write(f"{datetime.now():%d/%m/%Y %H:%M} — {tag + ' ' if tag else ''}{note}\n")
 
 
+NOTE_LINE = re.compile(r"(\d{2})/(\d{2})/(\d{4}) (\d{2}:\d{2}) — (?:\[([^\]]+)\] )?(.*)")
+
+
+def read_notes():
+    """Las notas del bloc, en orden: [{"i": línea, "date": "2026-09-29", "time": "20:31",
+    "tag": "abrir" | "orden voz" | … | "", "text": …, "raw": línea tal cual}]."""
+    try:
+        lines = NOTES_FILE.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    notes = []
+    for i, line in enumerate(lines):
+        if not line.strip():
+            continue
+        m = NOTE_LINE.match(line)
+        if m:
+            d, mo, y, time, tag, text = m.groups()
+            notes.append({"i": i, "date": f"{y}-{mo}-{d}", "time": time, "tag": tag or "", "text": text, "raw": line})
+        else:  # escrita a mano en el Bloc de notas
+            notes.append({"i": i, "date": "", "time": "", "tag": "", "text": line, "raw": line})
+    return notes
+
+
+def delete_note(index, raw):
+    """Borra la línea `index` del bloc, solo si sigue siendo la misma (por si el archivo cambió)."""
+    lines = NOTES_FILE.read_text(encoding="utf-8").splitlines()
+    if not (0 <= index < len(lines)) or lines[index] != raw:
+        return False
+    del lines[index]
+    NOTES_FILE.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
+    return True
+
+
+def notes_version():
+    """Cambia cada vez que se modifica el bloc (para refrescar la ventana)."""
+    try:
+        return NOTES_FILE.stat().st_mtime_ns
+    except OSError:
+        return 0
+
+
 def fold(text):
     """Minúsculas y sin tildes, conservando la longitud (para poder cortar el original)."""
     return "".join(unicodedata.normalize("NFD", c)[0] for c in text.lower())

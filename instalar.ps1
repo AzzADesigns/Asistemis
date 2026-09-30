@@ -71,6 +71,7 @@ foreach ($carpeta in $destinos) {
     $acceso.Arguments = '"' + (Join-Path $root 'asistemis.py') + '"'
     $acceso.WorkingDirectory = $root
     $acceso.Description = 'Asistemis: notas y órdenes por voz'
+    if ($carpeta -eq [Environment]::GetFolderPath('Startup')) { $acceso.Arguments = ($acceso.Arguments + ' --segundo-plano').Trim() }
     $acceso.Save()
     Write-Host "  $carpeta\Asistemis.lnk"
 }

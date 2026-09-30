@@ -72,6 +72,11 @@ Sin Claude Code, todo lo demás funciona igual.
 | «Asistemis, **busca** …» | Abre la búsqueda de Google en tu navegador | En cuanto haces una pausa |
 | «Asistemis, **ejecutá** …» (algo que no es una app) | Se lo pasa a Claude y la respuesta aparece en su panel | En cuanto haces una pausa |
 
+- **La ventana de Asistemis** (se abre desde el menú Inicio, con doble clic en el icono junto al reloj o
+  abriendo Asistemis otra vez): tus notas como un chat, agrupadas por día, con buscador; puedes escribir
+  notas nuevas, copiarlas y borrarlas. Muestra también lo que abriste, cerraste y buscaste (se puede
+  ocultar), tiene una pestaña con Claude y un interruptor para encender/apagar. Cerrarla no cierra
+  Asistemis. Al arrancar con Windows no se abre: queda en segundo plano.
 - **Ctrl+Alt+C** abre el panel de Claude, donde también puedes escribir órdenes.
 - Clic derecho en el icono junto al reloj: encender/apagar, anotar sin decir «Asistemis», abrir las
   notas o salir.
