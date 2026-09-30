@@ -160,8 +160,10 @@ El instalador lo hace todo solo:
 - ✔ prepara un entorno de Python propio e instala lo necesario,
 - ✔ si tienes tarjeta NVIDIA, instala lo que hace falta para usarla,
 - ✔ descarga los modelos de voz (~1,6 GB, solo la primera vez),
-- ✔ crea el acceso en el menú Inicio y hace que arranque con Windows,
+- ✔ crea accesos en el **Escritorio**, el menú Inicio y el arranque con Windows,
 - ✔ y abre Asistemis.
+
+> 💡 En el **Escritorio** queda **Asistemis.lnk** (icono junto al reloj). Doble clic para abrirlo; Ctrl+Alt+N lo enciende y apaga. También está en el menú Inicio como **Asistemis**.
 
 **3. ¡Listo!**
 

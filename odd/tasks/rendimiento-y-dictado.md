@@ -110,8 +110,11 @@ Reducir consumo innecesario de CPU/RAM en Asistemis y añadir un modo de transcr
   - [x] Detección SAC + chequeo `import av` en instalar.ps1
   - [x] docs/bloqueos-windows.md — guía completa Smart App Control / antivirus / PyAV
   - [x] README enlaza la guía y documenta el error de Control de aplicaciones
-  - [ ] Prueba manual del usuario (apagar SAC → import av → instalar modelos → dictado)
+  - [x] Acceso directo en Escritorio (instalar.ps1 + creado en esta máquina)
+  - [x] Instalación completa en la PC del usuario (modelos GPU, Asistemis corriendo)
+  - [ ] Prueba manual del usuario (nota / dictado)
   - [ ] README del dictado (pendiente tras probar)
+  - [ ] Push de la rama (pendiente)
 
 ## Prueba manual sugerida (antes del push)
 1. Nota larga con pausas: "Asistemis, anota … eso es todo" → se guarda completa (probe incremental).

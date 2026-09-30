@@ -117,20 +117,26 @@ if (-not $SinDescargarModelos) {
     }
 }
 
-# 4. Accesos directos (menú Inicio y, si se quiere, arranque con Windows)
+# 4. Accesos directos (Escritorio, menú Inicio y, si se quiere, arranque con Windows)
 $destinos = @()
 if (-not $SinAccesos) {
     Paso 'Creando accesos directos'
+    # Escritorio: para que el usuario sepa cómo volver a abrir Asistemis
+    $destinos += [Environment]::GetFolderPath('Desktop')
     $destinos += [Environment]::GetFolderPath('Programs')
     if (-not $SinInicioAutomatico) { $destinos += [Environment]::GetFolderPath('Startup') }
 }
 $shell = New-Object -ComObject WScript.Shell
+$icono = Join-Path $root 'recursos\asistemis.ico'
+if (-not (Test-Path $icono)) { $icono = Join-Path $root 'recursos\asistemis.png' }
+if (-not (Test-Path $icono)) { $icono = Join-Path $root '.venv\Scripts\pythonw.exe' }
 foreach ($carpeta in $destinos) {
     $acceso = $shell.CreateShortcut((Join-Path $carpeta 'Asistemis.lnk'))
     $acceso.TargetPath = Join-Path $root '.venv\Scripts\pythonw.exe'
     $acceso.Arguments = '"' + (Join-Path $root 'asistemis.py') + '"'
     $acceso.WorkingDirectory = $root
     $acceso.Description = 'Asistemis: notas y órdenes por voz'
+    $acceso.IconLocation = "$icono,0"
     if ($carpeta -eq [Environment]::GetFolderPath('Startup')) { $acceso.Arguments = ($acceso.Arguments + ' --segundo-plano').Trim() }
     $acceso.Save()
     Write-Host "  $carpeta\Asistemis.lnk"
