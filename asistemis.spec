@@ -18,10 +18,15 @@ for gpu in ("nvidia.cublas", "nvidia.cudnn", "nvidia.cuda_nvrtc"):  # solo si es
 
 hidden = ["pystray._win32", "clr", "pynvml", "win32com.propsys", "win32com.shell"]
 hidden += collect_submodules("webview.platforms")
+# música: UI Automation para tocar «Reproducir» en YouTube Music (no WinRT: choca con onnxruntime)
+music = ["uiautomation", "comtypes.stream"]
+hidden += music
+datas += collect_data_files("uiautomation")
+binaries += collect_dynamic_libs("uiautomation")
 
 app = Analysis(["asistemis.py"], datas=datas, binaries=binaries, hiddenimports=hidden,
                excludes=["tkinter", "customtkinter", "matplotlib", "IPython"])
-tools = Analysis(["herramientas.py"], hiddenimports=["win32com.propsys", "win32com.shell"],
+tools = Analysis(["herramientas.py"], hiddenimports=["win32com.propsys", "win32com.shell"] + music,
                  excludes=["tkinter", "numpy", "faster_whisper", "webview"])
 
 app_exe = EXE(PYZ(app.pure), app.scripts, [], exclude_binaries=True, name="Asistemis",

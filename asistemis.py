@@ -34,7 +34,7 @@ import pystray
 import sounddevice as sd
 from PIL import Image, ImageDraw
 
-from herramientas import (APP_DIR, DATA_DIR, FROZEN, HOTWORDS, NOTES_FILE, STATUSES, add_task, close_app,
+from herramientas import (APP_DIR, DATA_DIR, FROZEN, HOTWORDS, NOTES_FILE, STATUSES, add_task, close_app, play_music,
                           delete_task, fold, installed_apps, move_task, open_app, save_note, web_search)
 from interfaz import Interface
 from ordenes import ClaudeChat
@@ -105,7 +105,7 @@ def similar(a, b):
 # "ejecutá <app o juego>" lo abre Asistemis; solo si no es una app se lo pasa a Claude
 COMMANDS = (("note", r"(?:anot|apunt)"), ("open", r"(?:abr[ie]|inici|arranc|lanz|jug)"),
             ("close", r"(?:cerr|cier)"), ("search", r"busc"), ("order", r"ejecut"))
-ACTIONS = ("open", "close", "search", "order", "task_add", "task_move")  # se ejecutan en cuanto hay una pausa
+ACTIONS = ("open", "close", "search", "order", "task_add", "task_move", "music")  # se ejecutan en cuanto hay una pausa
 TASK_SILENCE = 1.5  # "agregá la tarea …" espera un poco más de silencio: la frase puede ser larga
 
 # tareas: "agregá la tarea comprar pan", "estoy haciendo la tarea 3", "finalicé la tarea tres"
@@ -123,6 +123,16 @@ TASK_STATUS = (  # en este orden: "sacá la tarea 3" es borrar, no terminar
 )
 TASK_ADD = re.compile(r"(?:agreg\w*|anot\w*|apunt\w*|cre\w*|nuev[ao])\s+(?:(?:la|una|otra)\s+)?(?:nueva\s+)?"
                       r"tareas?\b[\s,:]*(?:de\s+|que\s+)?")
+
+
+# música: "reproducí música", "reproducime música / youtube", "quiero escuchar música", "quiero música"
+MUSIC = re.compile(r"(?:reproduc\w*|quiero(?:\s+escuchar)?|pon[ea]\w*)\s+(?:(?:la|el|un[ao]?|algo\s+de|de)\s+)?"
+                   r"(?:musica|youtube)\b")
+
+
+def music_command(text, start, end):
+    """("music", "YouTube Music") si lo dicho es para poner música, o None."""
+    return ("music", "YouTube Music") if MUSIC.match(fold(text[start:end]).lstrip(" ,.;:¡!¿?")) else None
 
 
 def command_of(token):
@@ -187,6 +197,8 @@ def parse(text):
         start = tokens[k - 1].end()
         if task := task_command(text, start, end, after_note=with_note):
             return task
+        if not with_note and (music := music_command(text, start, end)):
+            return music
         nxt = tokens[k].group() if len(tokens) > k else ""
         if with_note:  # "Asistemis anota" oído junto ("asisten sanota"): lo que sigue es la nota
             pass
@@ -198,6 +210,8 @@ def parse(text):
             start = tokens[k].end()
     elif task := task_command(text, 0, end):  # grabación con "Anotar ahora": "agregá la tarea …"
         return task
+    elif music := music_command(text, 0, end):  # grabación con "Anotar ahora": "reproducime música"
+        return music
     elif tokens and command_of(tokens[0].group()):  # grabación con Ctrl+Alt+N: "ejecuta …"
         kind, start = command_of(tokens[0].group()), tokens[0].end()
     else:
@@ -641,6 +655,12 @@ class Engine(threading.Thread):
                     self.ui.put(("task_moved", number, STATUSES[status], task["text"]))
                 else:
                     self.ui.put(("task_missing", number))
+            elif kind == "music":
+                result = play_music()
+                log.info("música: %s", result)
+                if result in ("opened", "resumed", "playing"):
+                    save_note(body, tag="[abrir]")
+                self.ui.put(("music", result or "missing"))
             elif kind == "search":
                 web_search(body)
                 save_note(body, tag="[buscar]")

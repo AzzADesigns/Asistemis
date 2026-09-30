@@ -3,6 +3,7 @@
     python herramientas.py abrir "yt music"      abre una aplicación del menú Inicio (o trae la que ya está abierta)
     python herramientas.py cerrar "chrome"       cierra sus ventanas, como el botón ✕
     python herramientas.py anotar "comprar pan"  añade una nota al bloc de Asistemis
+    python herramientas.py musica                abre YouTube Music (si hace falta) y pone la canción seleccionada
 
 Solo abre aplicaciones instaladas (las de Get-StartApps) y nunca desinstaladores
 ni herramientas del sistema, así que no sirve para ejecutar comandos arbitrarios.
@@ -209,7 +210,7 @@ ALIAS_PATTERNS = [
 ]
 
 # nombres que se le dan a Whisper como pista para que los escriba bien
-HOTWORDS = "Asistemis, abrime Steam, Antigravity IDE, Figma, Discord, Chrome, YouTube Music, Spotify. Agregá la tarea."
+HOTWORDS = "Asistemis, abrime Steam, Antigravity IDE, Figma, Discord, Chrome, YouTube Music, Spotify. Agregá la tarea. Reproducime música."
 
 FILLER = re.compile(r"^(?:el|la|los|las|un|una|mi|me|al|a|por favor|porfa)\s+|\s+(?:por favor|porfa)$")
 
@@ -428,12 +429,89 @@ def close_app(query):
     return app[0], len(windows)
 
 
+# --- Música -------------------------------------------------------------------
+
+MUSIC_APP = "YouTube Music"
+PLAY_NAMES = ("Reproducir", "Play")   # botón de la barra del reproductor (según el idioma de YT Music)
+PAUSE_NAMES = ("Pausar", "Pause")
+
+
+def _buttons(window):
+    """[(nombre, botón)] de la ventana: todos los botones de una vez (búsqueda nativa de
+    UI Automation, ~0,1 s; recorrer el árbol desde Python tarda más de 1 s)."""
+    import uiautomation as auto
+    from uiautomation.uiautomation import _AutomationClient
+    condition = _AutomationClient.instance().IUIAutomation.CreatePropertyCondition(
+        auto.PropertyId.ControlTypeProperty, auto.ControlType.ButtonControl)
+    found = window.Element.FindAll(4, condition)  # TreeScope_Descendants
+    elements = [found.GetElement(i) for i in range(found.Length)]
+    return [(e.CurrentName, e) for e in elements if e.CurrentName]
+
+
+def _press_play(hwnd, timeout):
+    """Toca «Reproducir» en la barra del reproductor sin traer la ventana al frente
+    (UI Automation, como un lector de pantalla); cuando suena, el botón pasa a «Pausar».
+    Si con eso no suena (recién abierta y sin canción en la barra), pone la primera de la
+    página de inicio. Devuelve "playing" (ya sonaba), "played" o None si no pudo."""
+    import uiautomation as auto
+    with auto.UIAutomationInitializerInThread():
+        window = auto.ControlFromHandle(hwnd)
+        end, first_look = time.monotonic() + timeout, True
+        while time.monotonic() < end:
+            try:  # mientras la página carga, los botones aparecen y desaparecen
+                buttons = _buttons(window)
+                if any(name in PAUSE_NAMES for name, _ in buttons):
+                    return "playing" if first_look else "played"
+                first_look = False
+                selected = [e for name, e in buttons if name in PLAY_NAMES]
+                first = [e for name, e in buttons if name.startswith(PLAY_NAMES) and name not in PLAY_NAMES][:1]
+                for element in selected + first:  # "Reproducir" y, si no alcanza, "Reproducir <lista>"
+                    auto.Control.CreateControlFromElement(element).GetInvokePattern().Invoke()
+                    for _ in range(12):
+                        time.sleep(0.25)
+                        if any(name in PAUSE_NAMES for name, _ in _buttons(window)):
+                            return "played"
+            except Exception:
+                pass
+            time.sleep(0.4)
+    return None
+
+
+def play_music():
+    """«Reproducime música»: si YouTube Music está cerrada la abre y pone la canción
+    seleccionada en cuanto carga; si está abierta, le da play (si ya sonaba, no la pausa).
+    Devuelve "opened", "resumed", "playing" (ya sonaba) o "failed"; None si no está instalada."""
+    app = find_app(MUSIC_APP)
+    if not app:
+        return None
+    windows = app_windows(app)
+    opened = not windows
+    if opened:
+        subprocess.Popen(["explorer.exe", f"shell:AppsFolder\\{app[1]}"], creationflags=NO_WINDOW)
+        end = time.monotonic() + 20
+        while not windows and time.monotonic() < end:
+            time.sleep(0.5)
+            windows = app_windows(app)
+        if not windows:
+            return "failed"
+    result = _press_play(windows[0], timeout=25 if opened else 8)
+    if result == "played":
+        return "opened" if opened else "resumed"
+    return result or "failed"
+
+
 def web_search(query):
     """Abre la búsqueda en el navegador predeterminado."""
     webbrowser.open("https://www.google.com/search?q=" + quote_plus(query))
 
 
 def main(argv):
+    if argv[:1] == ["musica"]:
+        result = play_music()
+        print({"opened": "Abrí YouTube Music y puse la canción seleccionada.", "resumed": "Reproduciendo.",
+               "playing": "Ya estaba sonando.", None: "YouTube Music no está instalada."}.get(
+                   result, "No pude darle play en YouTube Music."))
+        return 0 if result in ("opened", "resumed", "playing") else 1
     if len(argv) < 2 or argv[0] not in ("abrir", "cerrar", "anotar"):
         print(__doc__)
         return 2

@@ -7,3 +7,4 @@ pillow==12.3.0
 pywebview==6.2.1
 pywin32==312
 nvidia-ml-py==13.615.71
+uiautomation==2.0.29

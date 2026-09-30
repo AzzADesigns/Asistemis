@@ -1,19 +1,22 @@
-/* Estilo común: cristal blanco sobre el acrílico de Windows, texto negro */
+/* Estilo común: vidrio translúcido sobre el desenfoque de Windows, texto claro */
 :root {
-  --ink: #0e0f12;
-  --muted: #5d606a;
-  --faint: #8a8d96;
-  --glass: rgba(255, 255, 255, .60);
-  --glass-strong: rgba(255, 255, 255, .78);
-  --line: rgba(15, 17, 22, .08);
-  --highlight: rgba(255, 255, 255, .85);
-  --green: #16a34a;
-  --green-glow: rgba(34, 197, 94, .35);
-  --red: #e5484d;
-  --red-glow: rgba(229, 72, 77, .30);
-  --blue: #2563eb;
-  --violet: #7c5cff;
-  --amber: #d97706;
+  --ink: #f4f6fb;
+  --muted: rgba(235, 238, 248, .72);
+  --faint: rgba(235, 238, 248, .48);
+  --glass: rgba(22, 24, 34, .30);
+  --glass-strong: rgba(255, 255, 255, .10);
+  --surface: rgba(255, 255, 255, .07);
+  --surface-hover: rgba(255, 255, 255, .15);
+  --line: rgba(255, 255, 255, .14);
+  --highlight: rgba(255, 255, 255, .22);
+  --fill: linear-gradient(135deg, rgba(139, 92, 246, .78), rgba(59, 130, 246, .72));
+  --green: #34d399;
+  --green-glow: rgba(52, 211, 153, .30);
+  --red: #f87171;
+  --red-glow: rgba(248, 113, 113, .30);
+  --blue: #60a5fa;
+  --violet: #a78bfa;
+  --amber: #fbbf24;
   --radius: 8px;
 }
 
@@ -25,31 +28,32 @@ html, body {
   background: transparent;
   overflow: hidden;
   color: var(--ink);
-  font: 13px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  font: 18px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, .25);  /* se lee aunque detrás haya algo claro */
   user-select: none;
 }
 
 .glass {
   height: 100%;
   background: var(--glass);
-  box-shadow: inset 0 0 0 1px var(--highlight), inset 0 1px 0 #fff;
+  box-shadow: inset 0 0 0 1px var(--highlight), inset 0 1px 0 rgba(255, 255, 255, .30);
   border-radius: var(--radius);
 }
 
 .dot {
   flex: none;
-  width: 10px;
-  height: 10px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
-  background: #b9bcc4;
+  background: rgba(255, 255, 255, .35);
   transition: background .25s, box-shadow .25s;
 }
 .dot.on { background: var(--green); box-shadow: 0 0 0 4px var(--green-glow), 0 0 14px var(--green); }
 .dot.rec { background: var(--red); box-shadow: 0 0 0 4px var(--red-glow); animation: pulse 1.4s ease-in-out infinite; }
-.dot.busy { background: var(--blue); box-shadow: 0 0 0 4px rgba(37, 99, 235, .18); animation: pulse 1s ease-in-out infinite; }
+.dot.busy { background: var(--blue); box-shadow: 0 0 0 4px rgba(96, 165, 250, .25); animation: pulse 1s ease-in-out infinite; }
 .dot.ok { background: var(--green); box-shadow: 0 0 0 4px var(--green-glow); }
-.dot.claude { background: var(--violet); box-shadow: 0 0 0 4px rgba(124, 92, 255, .2); }
+.dot.claude { background: var(--violet); box-shadow: 0 0 0 4px rgba(167, 139, 250, .25); }
 .dot.error { background: var(--red); }
 
 @keyframes pulse { 50% { transform: scale(.78); opacity: .7; } }
@@ -66,16 +70,19 @@ button {
   cursor: pointer;
 }
 .btn {
-  height: 30px;
+  height: 36px;
   padding: 0 14px;
-  border-radius: 15px;
-  background: rgba(255, 255, 255, .7);
-  box-shadow: inset 0 0 0 1px var(--line), 0 1px 2px rgba(0, 0, 0, .06);
+  border-radius: 18px;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
   font-weight: 600;
-  font-size: 12px;
+  font-size: 17px;
   transition: background .15s, transform .1s;
 }
-.btn:hover { background: #fff; }
+.btn:hover { background: var(--surface-hover); }
 .btn:active { transform: scale(.97); }
-.btn.primary { background: var(--ink); color: #fff; box-shadow: 0 2px 8px rgba(0, 0, 0, .18); }
-.btn.primary:hover { background: #26282e; }
+.btn.primary { background: var(--fill); color: #fff; box-shadow: inset 0 0 0 1px var(--highlight), 0 2px 10px rgba(99, 102, 241, .35); }
+.btn.primary:hover { filter: brightness(1.12); }
+
+::placeholder { color: var(--faint); }
+::selection { background: rgba(167, 139, 250, .45); color: #fff; }

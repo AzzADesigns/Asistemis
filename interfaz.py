@@ -1,4 +1,4 @@
-"""Interfaz de Asistemis: ventanas HTML/CSS con cristal de Windows 11 (acrílico).
+﻿"""Interfaz de Asistemis: ventanas HTML/CSS con cristal de Windows 11 (acrílico).
 
 Cuatro ventanas sin marco, creadas al arrancar y ocultas hasta que hacen falta:
 - toast:  "Asistemis encendido / apagado" (abajo a la derecha, se va sola).
@@ -33,7 +33,7 @@ UI_DIR = APP_DIR / "ui"
 user32, dwmapi = ctypes.WinDLL("user32"), ctypes.windll.dwmapi
 
 # tamaños en píxeles CSS (se multiplican por la escala de Windows)
-SIZES = {"toast": (340, 72), "mic": (64, 64), "rec": (380, 168), "claude": (440, 640), "main": (1080, 720)}
+SIZES = {"toast": (430, 92), "mic": (70, 70), "rec": (470, 210), "claude": (560, 800), "main": (1340, 880)}
 MARGIN = 16
 TOAST_SECONDS = 2.6
 QUITTING = threading.Event()  # solo con esto activo se dejan cerrar las ventanas
@@ -53,6 +53,22 @@ SW_HIDE, SW_SHOWNOACTIVATE = 0, 4
 
 class MARGINS(ctypes.Structure):
     _fields_ = [("l", ctypes.c_int), ("r", ctypes.c_int), ("t", ctypes.c_int), ("b", ctypes.c_int)]
+
+
+class ACCENT(ctypes.Structure):
+    _fields_ = [("state", ctypes.c_int), ("flags", ctypes.c_int), ("color", ctypes.c_uint), ("anim", ctypes.c_int)]
+
+
+class WCA_DATA(ctypes.Structure):
+    _fields_ = [("attr", ctypes.c_int), ("data", ctypes.c_void_p), ("size", ctypes.c_size_t)]
+
+
+def _glass(hwnd):
+    """Vidrio de verdad: desenfoca lo que hay detrás sin el tinte casi opaco del acrílico de Windows
+    (ACCENT_ENABLE_BLURBEHIND). El tinte y los bordes los pone el CSS."""
+    accent = ACCENT(3, 0, 0, 0)
+    data = WCA_DATA(19, ctypes.cast(ctypes.byref(accent), ctypes.c_void_p), ctypes.sizeof(accent))  # WCA_ACCENT_POLICY
+    user32.SetWindowCompositionAttribute(wintypes.HWND(hwnd), ctypes.byref(data))
 
 
 def _dwm(hwnd, attr, value):
@@ -137,14 +153,14 @@ class Glass:
                 user32.SetWindowLongW(hwnd, -20, (ex | 0x80) & ~0x40000)  # WS_EX_TOOLWINDOW, sin WS_EX_APPWINDOW
             m = MARGINS(-1, -1, -1, -1)
             dwmapi.DwmExtendFrameIntoClientArea(wintypes.HWND(hwnd), ctypes.byref(m))
-            _dwm(hwnd, 20, 0)   # tema claro
+            _dwm(hwnd, 20, 1)   # tema oscuro
+            _dwm(hwnd, 38, 1)   # sin material de Windows (acrílico/mica): se ve blanco casi sólido
             if self.round:
-                # el material de Windows siempre es rectangular: la burbuja es solo CSS sobre transparente
-                _dwm(hwnd, 38, 1)
+                # el desenfoque siempre es rectangular: la burbuja es solo CSS sobre transparente
                 _dwm(hwnd, 33, 1)
                 _dwm(hwnd, 2, 1)   # sin sombra de ventana (DWMWA_NCRENDERING_POLICY = desactivada)
             else:
-                _dwm(hwnd, 38, 3)  # material acrílico
+                _glass(hwnd)
                 _dwm(hwnd, 33, 2)  # esquinas redondeadas
             user32.ShowWindow(hwnd, SW_HIDE)
 
@@ -172,6 +188,21 @@ class Glass:
 
     def minimize(self):
         user32.ShowWindow(self.hwnd, SW_MINIMIZE)
+
+    def toggle_maximize(self):
+        """Ocupa toda la zona útil de la pantalla (sin tapar la barra de tareas) o vuelve a su tamaño."""
+        if getattr(self, "restore_rect", None):
+            (x, y), (w, h) = self.restore_rect
+            self.restore_rect = None
+            _dwm(self.hwnd, 33, 2)  # esquinas redondeadas otra vez
+        else:
+            self.restore_rect = (self.current_pos(), self.size)
+            left, top, right, bottom = work_area()
+            x, y, w, h = left, top, right - left, bottom - top
+            _dwm(self.hwnd, 33, 1)  # maximizada: esquinas rectas, como cualquier ventana
+        self.pos, self.size = (x, y), (w, h)
+        user32.SetWindowPos(self.hwnd, self.z, x, y, w, h, SWP_NOACTIVATE)
+        return self.restore_rect is not None
 
     def hide(self):
         if self.hwnd and self.visible:
@@ -323,6 +354,11 @@ class Interface:
             "task_missing": ("muted", f"No hay ninguna tarea #{args[0]}" if args else "", "Mira los números en la pestaña Tareas", 3.5),
             "not_open": ("muted", f"{args[0]} no está abierto" if args else "", "No había nada que cerrar", 3.0),
             "searched": ("ok", "Buscando en el navegador", args[0] if args else "", 2.5),
+            "music": {"opened": ("ok", "Abriendo YouTube Music", "Y pongo la canción seleccionada", 3.0),
+                      "resumed": ("ok", "Reproduciendo", "YouTube Music", 2.5),
+                      "playing": ("ok", "Ya está sonando", "YouTube Music", 2.5),
+                      "missing": ("muted", "No encontré YouTube Music", "¿Está instalada como app?", 3.5),
+                      }.get(args[0] if args else "", ("error", "No pude darle play", "YouTube Music no respondió", 4.0)),
             "order": ("claude", "Enviado a Claude", args[0] if args else "", 2.5),
             "nothing": ("muted", "No entendí nada", "No se guardó nada", 3.0),
             "cancelled": ("muted", "Cancelado", "", 1.2),
@@ -408,6 +444,9 @@ class MainApi:
 
     def minimize(self):
         self._iface.main.minimize()
+
+    def toggle_maximize(self):
+        return self._iface.main.toggle_maximize()
 
     def close(self):
         self._iface.ui.put(("hide_main",))
