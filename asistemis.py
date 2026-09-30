@@ -2,7 +2,7 @@
 
 Ctrl+Alt+N (pensado para un botón del mouse) lo enciende y lo apaga:
 - Encendido: escucha siempre "Asistemis…" y hace lo que se le pide.
-- Apagado: micrófono cerrado y modelo fuera de la GPU; no consume nada.
+- Apagado: micrófono cerrado y modelos descargados; no consume nada.
 
 - "Asistemis, anota <lo que sea>… eso es todo": nota con fecha en notas-asistemis.txt (escritorio).
 - "Asistemis, abrime Chrome" / "cerrá Chrome" / "busca <algo>" / "ejecuta <orden>": se hace en
@@ -282,7 +282,10 @@ class Engine(threading.Thread):
         self.check_every = CHECK_EVERY
         self.probing = threading.Event()   # hay una transcripción de pausa en curso
         self.probed_at = None              # momento de voz que ya se transcribió en una pausa
-        # encendido: escucha "Asistemis"; apagado: micrófono cerrado y GPU libre
+        self.probe_offset = 0              # samples de chunks ya transcritos en sondas anteriores (T1)
+        self.probe_text = ""               # texto acumulado de las sondas, para no re-transcribir al final (T1)
+        self.recent_levels = deque(maxlen=CHECK_WINDOW)  # rms de los últimos N bloques: no recalcular (T4)
+        # encendido: escucha "Asistemis"; apagado: micrófono cerrado y modelos descargados
         self.wake_by_voice = load_settings().get("encendido", True)
         self.stream = None
         self.by_button = False
@@ -316,9 +319,11 @@ class Engine(threading.Thread):
                     self._maybe_check(list(self.preroll), "wake")
                 elif self.state == self.RECORDING:
                     self.chunks.append(block)
-                    self.ui.put(("level", level(block)))
+                    rms = level(block)  # se calcula una sola vez por bloque y se reutiliza (T4)
+                    self.ui.put(("level", rms))
+                    self.recent_levels.append(rms)
                     now = time.monotonic()
-                    if level(block) >= SPEECH_LEVEL:
+                    if rms >= SPEECH_LEVEL:
                         self.last_voice = now
                     self._maybe_check(self.chunks, "stop")
                     silent = now - self.last_voice
@@ -339,11 +344,16 @@ class Engine(threading.Thread):
         decirse bajando la voz, justo antes de callarse."""
         if self.blocks_seen % self.check_every or self.checking.is_set():
             return
-        if self.gpu and not self.whisper_ready.is_set():  # el modelo está volviendo a la GPU
-            return
+        if self.listener is None or (self.gpu and not self.whisper_ready.is_set()):
+            return  # modelos descargados al apagar, o el modelo está volviendo a la GPU
         window = blocks[-CHECK_WINDOW:]
         recent = window if kind == "stop" else window[-self.check_every:]
-        if max(level(b) for b in recent) < SPEECH_LEVEL:
+        # T4: en RECORDING los rms ya están en recent_levels; en IDLE se recalcula (pocos bloques)
+        if kind == "stop" and len(self.recent_levels) >= len(recent):
+            speech = max(list(self.recent_levels)[-len(recent):]) >= SPEECH_LEVEL
+        else:
+            speech = max(level(b) for b in recent) >= SPEECH_LEVEL
+        if not speech:
             return
         self.checking.set()
         audio = np.concatenate(window).astype(np.float32) / 32768
@@ -367,25 +377,42 @@ class Engine(threading.Thread):
             self.checking.clear()
 
     def _probe(self):
-        """Tras una pausa, transcribe lo dicho: si es una orden se ejecuta ya, sin esperar
-        a "eso es todo". En la CPU tarda ~7 s, así que solo se hace si la escucha ya oyó la orden."""
+        """Tras una pausa, transcribe lo nuevo desde la última sonda (incremental, no todo el audio):
+        si es una orden se ejecuta ya, sin esperar a "eso es todo". La ventana incluye 1 s de
+        contexto al inicio para no cortar palabras en el borde."""
         if self.probing.is_set() or not (self.gpu or self.opening):
             return
         self.probed_at = self.last_voice
         self.probing.set()
-        audio = np.concatenate(self.chunks).astype(np.float32) / 32768
-        threading.Thread(target=self._probe_run, args=(audio, self.generation, self.last_voice),
+        start_sample = max(0, self.probe_offset - SR)  # 1 s de solape al inicio
+        cum = 0
+        start_idx = 0
+        for i, block in enumerate(self.chunks):
+            if cum + len(block) > start_sample:
+                start_idx = i
+                break
+            cum += len(block)
+        else:
+            start_idx = len(self.chunks)
+        if start_idx >= len(self.chunks):  # no hay audio nuevo desde la última sonda
+            self.probing.clear()
+            return
+        audio = np.concatenate(self.chunks[start_idx:]).astype(np.float32) / 32768
+        total_samples = sum(len(b) for b in self.chunks)  # foto al empezar la sonda
+        threading.Thread(target=self._probe_run, args=(audio, self.generation, self.last_voice, total_samples),
                          daemon=True).start()
 
-    def _probe_run(self, audio, generation, voice_at):
+    def _probe_run(self, audio, generation, voice_at, new_offset):
         try:
             self.whisper_ready.wait()
+            if self.whisper is None:
+                raise RuntimeError("no se pudo cargar Whisper")
             segments, _ = self.whisper.transcribe(audio, language="es", beam_size=5, vad_filter=True, hotwords=HOTWORDS,
                                                   without_timestamps=True)
             text = "".join(s.text for s in segments).strip()
             if LOG_HEARD:
                 log.info("pausa: %s", text)
-            self.commands.put(("probe", generation, text, voice_at))
+            self.commands.put(("probe", generation, text, voice_at, new_offset))
         except Exception:
             log.exception("error al transcribir la pausa")
         finally:
@@ -431,14 +458,16 @@ class Engine(threading.Thread):
                 if generation != self.generation:
                     continue
             if cmd == "probe":
-                text, voice_at = rest
-                kind, body = parse(text)
+                segment, voice_at, new_offset = rest
+                self.probe_text = f"{self.probe_text} {segment}".strip() if self.probe_text else segment
+                self.probe_offset = new_offset
+                kind, body = parse(self.probe_text)  # se parsea el texto acumulado, no solo el segmento
                 # solo si sigue callado desde entonces: si volvió a hablar, la orden no había terminado
                 if self.state == self.RECORDING and kind in ACTIONS and body and voice_at == self.last_voice:
                     if kind == "task_add" and time.monotonic() - self.last_voice < TASK_SILENCE:
                         self.probed_at = None  # todavía puede estar dictándola: se vuelve a mirar
                     else:
-                        self._run_text(text)
+                        self._run_text(self.probe_text)
             elif cmd == "heard":
                 if self.state == self.IDLE:
                     self.last_heard = rest[0]
@@ -470,6 +499,9 @@ class Engine(threading.Thread):
         self.state = self.RECORDING
         self.generation += 1
         self.chunks = preroll
+        self.probe_text = ""
+        self.probe_offset = 0
+        self.recent_levels.clear()
         self.heard = heard
         self.opening = self._is_opening(heard)
         self.started = self.last_voice = time.monotonic()
@@ -487,6 +519,9 @@ class Engine(threading.Thread):
         self.state = self.TRANSCRIBING
         self.generation += 1
         self.chunks = []
+        self.probe_text = ""
+        self.probe_offset = 0
+        self.recent_levels.clear()
         threading.Thread(target=self._act, args=(text,), daemon=True).start()
 
     def _finish(self):
@@ -497,13 +532,40 @@ class Engine(threading.Thread):
         self.state = self.TRANSCRIBING
         self.generation += 1
         self.ui.put(("transcribing",))
-        audio = np.concatenate(self.chunks).astype(np.float32) / 32768
-        self.chunks = []
-        threading.Thread(target=self._transcribe, args=(audio,), daemon=True).start()
+        total_samples = sum(len(c) for c in self.chunks)
+        probe_text, probe_offset = self.probe_text, self.probe_offset
+        self.probe_text = ""
+        self.probe_offset = 0
+        self.recent_levels.clear()
+        # T1: si las sondas ya cubrieron casi todo el audio, no se re-transcribe todo:
+        # se transcribe solo la cola y se suma al texto acumulado
+        if probe_text and total_samples and probe_offset >= total_samples * 0.9:
+            cum = 0
+            start_idx = 0
+            for i, block in enumerate(self.chunks):
+                if cum + len(block) > probe_offset:
+                    start_idx = i
+                    break
+                cum += len(block)
+            tail_blocks = self.chunks[start_idx:]
+            self.chunks = []
+            if tail_blocks:
+                audio = np.concatenate(tail_blocks).astype(np.float32) / 32768
+                threading.Thread(target=self._transcribe_tail, args=(audio, probe_text), daemon=True).start()
+            else:
+                log.info("nota completa desde las sondas")
+                self._act(probe_text)
+        else:
+            audio = np.concatenate(self.chunks).astype(np.float32) / 32768
+            self.chunks = []
+            threading.Thread(target=self._transcribe, args=(audio,), daemon=True).start()
 
     def _idle(self):
         self.chunks = []
         self.preroll.clear()
+        self.probe_text = ""
+        self.probe_offset = 0
+        self.recent_levels.clear()
         self.generation += 1
         self.state = self.IDLE
         self.by_button = False
@@ -526,7 +588,12 @@ class Engine(threading.Thread):
         save_settings({**load_settings(), "encendido": on})
         log.info("Asistemis %s", "encendido" if on else "apagado")
         if on:
-            self._ensure_gpu()
+            if self.whisper is None or self.listener is None:
+                # los modelos se descargaron de la RAM al apagar: recargarlos
+                # (tradeoff: el primer arranque tras apagar es más lento)
+                threading.Thread(target=self._load_models, daemon=True).start()
+            else:
+                self._ensure_gpu()
             self._mic(True)
         else:
             if self.state == self.RECORDING:  # apagar corta lo que se estaba grabando
@@ -551,13 +618,25 @@ class Engine(threading.Thread):
             self.whisper_ready.set()
 
     def _maybe_unload(self):
-        """Apagado, libera la memoria de la GPU en cuanto nada está usando el modelo."""
-        if (self.gpu and self.gpu_loaded and not self.wake_by_voice and self.state == self.IDLE
+        """Apagado, libera la memoria de los modelos en cuanto nada está usando uno.
+        Al apagar de verdad (wake desactivado) se descargan también de la RAM de la CPU:
+        large-v3-turbo int8 ocupa 1-2 GB que no deberían quedarse residentes para siempre.
+        Tradeoff documentado: al reencender hay que recargar los modelos (arranque más lento).
+        Si solo se cierra la UI pero Asistemis sigue escuchando (wake encendido), no se toca nada."""
+        if not (self.state == self.IDLE and not self.wake_by_voice
                 and self.whisper_ready.is_set() and not self.checking.is_set() and not self.probing.is_set()):
+            return
+        if self.gpu and self.gpu_loaded:
             self.whisper_ready.clear()
-            self.whisper.model.unload_model(to_cpu=True)  # queda en la RAM: vuelve rápido
+            self.whisper.model.unload_model(to_cpu=True)  # en GPU: primero a la RAM…
             self.gpu_loaded = False
             log.info("modelo fuera de la GPU")
+        # …y al apagar del todo se descarga también de la RAM de la CPU (T2)
+        if self.whisper is not None or self.listener is not None:
+            self.whisper_ready.clear()
+            self.whisper = None
+            self.listener = None
+            log.info("modelos descargados de la RAM")
 
     def _load_models(self):
         """Con tarjeta NVIDIA, un solo modelo "turbo" en la GPU escucha y transcribe (~0,3 s).
@@ -610,6 +689,25 @@ class Engine(threading.Thread):
             text = "".join(s.text for s in segments).strip()
             if LOG_HEARD:
                 log.info("nota completa: %s", text)
+        except Exception as e:
+            log.exception("error al transcribir")
+            self.ui.put(("error", str(e)))
+            self.commands.put("done")
+            return
+        self._act(text)
+
+    def _transcribe_tail(self, audio, probe_text):
+        """Transcribe solo el final no cubierto por las sondas y lo suma al texto acumulado."""
+        try:
+            self.whisper_ready.wait()
+            if self.whisper is None:
+                raise RuntimeError("no se pudo cargar Whisper")
+            segments, _ = self.whisper.transcribe(audio, language="es", beam_size=5, vad_filter=True, hotwords=HOTWORDS,
+                                                  without_timestamps=True)
+            tail_text = "".join(s.text for s in segments).strip()
+            text = f"{probe_text} {tail_text}".strip() if tail_text else probe_text
+            if LOG_HEARD:
+                log.info("nota incremental: %s", text)
         except Exception as e:
             log.exception("error al transcribir")
             self.ui.put(("error", str(e)))

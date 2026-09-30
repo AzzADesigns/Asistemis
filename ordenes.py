@@ -1,6 +1,6 @@
 """Órdenes para Claude: las pasa a un `claude -p` que queda abierto y las muestra en un panel.
 
-El proceso se arranca de antemano y sigue vivo entre órdenes (ahorra ~4 s por orden);
+El proceso se arranca en diferido (primer uso) y sigue vivo entre órdenes (ahorra ~4 s por orden);
 toda la conversación ocurre en él. Claude trabaja en la carpeta `claude/` (ver su
 CLAUDE.md) y solo puede leer, buscar, abrir aplicaciones y anotar: todo lo demás lo
 rechaza el modo "dontAsk".
@@ -21,6 +21,7 @@ ALLOWED_TOOLS = ["Read", "Glob", "Grep", "WebSearch", "WebFetch",
 BUILTIN_TOOLS = ["Read", "Glob", "Grep", "WebSearch", "WebFetch", "Bash", "PowerShell"]
 TIMEOUT = 600  # s
 ERROR_LOG = DATA_DIR / "claude-errores.log"
+SETTINGS_FILE = DATA_DIR / "ajustes.json"  # mismo archivo que usa asistemis.py
 
 # qué se ve mientras Claude usa cada herramienta
 TOOL_LABELS = {"Read": "Leyendo…", "Glob": "Buscando archivos…", "Grep": "Buscando…",
@@ -122,6 +123,15 @@ def tool_label(block):
     return TOOL_LABELS.get(block.get("name"), "Trabajando…")
 
 
+def _claude_activo():
+    """¿Precalentar Claude al iniciar? Solo si ajustes.json lo pide ("claude_activo": true).
+    Por defecto se arranca en diferido, al primer uso."""
+    try:
+        return bool(json.loads(SETTINGS_FILE.read_text(encoding="utf-8")).get("claude_activo", False))
+    except (OSError, ValueError):
+        return False
+
+
 # --- Chat -------------------------------------------------------------------
 
 class ClaudeChat:
@@ -134,7 +144,11 @@ class ClaudeChat:
         self._pending = []            # órdenes en cola mientras Claude trabaja
         self._busy = False
         self._claude = ClaudeSession(self._on_event)
-        threading.Thread(target=self._warm_up, daemon=True).start()
+        # T3: no se precalienta Claude al arrancar; arranca en diferido al primer uso
+        # (submit, orden "ejecutá", o abrir el panel y escribir). Solo se precalienta si
+        # ajustes.json tiene "claude_activo": true.
+        if _claude_activo():
+            threading.Thread(target=self._warm_up, daemon=True).start()
 
     # --- llamadas desde la página ---
 
