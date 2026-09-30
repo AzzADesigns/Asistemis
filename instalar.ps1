@@ -14,19 +14,48 @@ function Paso($texto) { Write-Host "`n==> $texto" -ForegroundColor Cyan }
 function Fallo($texto) { Write-Host "`n$texto" -ForegroundColor Red; exit 1 }
 
 # 1. Python 3.10 - 3.12
+# Nota: la detección usa @($args) y no @args. En PowerShell 5.1, splatting un string
+# enumera caracteres ("py -3.12" llegaba roto al lanzador) y el instalador fallaba
+# aunque Python 3.12 estuviera bien instalado. Con array se pasa un solo argumento.
 Paso 'Buscando Python 3.12'
 $pyExe = $null
-foreach ($candidato in @('py -3.12', 'py -3.11', 'py -3.10', 'python')) {
-    $exe, $extra = $candidato -split ' '
+$pyExtra = @()
+$versionTxt = ''
+$candidatos = @(
+    , @('py', @('-3.12')),
+    , @('py', @('-3.11')),
+    , @('py', @('-3.10')),
+    , @('python', @())
+)
+# Red de seguridad: instalación típica de winget si el lanzador py no la registra
+$py312Directo = Join-Path $env:LOCALAPPDATA 'Programs\Python\Python312\python.exe'
+if (Test-Path $py312Directo) { $candidatos += , @($py312Directo, @()) }
+
+foreach ($par in $candidatos) {
+    $exe = $par[0]
+    $extra = @($par[1])
     try {
-        $version = & $exe @extra -c 'import sys; print(sys.version_info[0] * 100 + sys.version_info[1])' 2>$null
-        if ($LASTEXITCODE -eq 0 -and $version -in @('310', '311', '312')) { $pyExe, $pyExtra = $exe, $extra; break }
-    } catch {}
+        $ErrorActionPreference = 'Continue'
+        $raw = & $exe @extra -c 'import sys; print(sys.version_info[0] * 100 + sys.version_info[1])' 2>$null
+        $code = $LASTEXITCODE
+    } catch {
+        $raw = $null
+        $code = 1
+    } finally {
+        $ErrorActionPreference = 'Stop'
+    }
+    $versionTxt = ("$raw").Trim() -split "`r?`n" | Select-Object -First 1
+    if ($code -eq 0 -and $versionTxt -in @('310', '311', '312')) {
+        $pyExe = $exe
+        $pyExtra = $extra
+        break
+    }
 }
 if (-not $pyExe) {
     Fallo "No encontré Python 3.10, 3.11 o 3.12. Instálalo con:`n    winget install Python.Python.3.12`ny vuelve a ejecutar el instalador."
 }
-Write-Host ("Python {0}.{1}" -f [math]::Floor([int]$version / 100), ([int]$version % 100))
+$pyVer = [int]$versionTxt
+Write-Host ("Python {0}.{1}" -f [math]::Floor($pyVer / 100), ($pyVer % 100))
 
 # 2. Entorno virtual y dependencias
 if (-not (Test-Path '.venv\Scripts\python.exe')) {

@@ -219,6 +219,18 @@ Por privacidad, Asistemis **no guarda lo que oye**. Si quieres ajustar la activa
 ## ❓ Problemas frecuentes
 
 <details>
+<summary><b>El instalador dice que no encuentra Python 3.10–3.12</b></summary>
+
+Puede pasar aunque `winget install Python.Python.3.12` ya se haya ejecutado:
+
+1. **El lanzador `py` no ve 3.12 en ese contexto.** En PowerShell 5.1, el script pasaba los argumentos con splatting de string (`@args` con `"-3.12"`); eso enumera caracteres y el instalador fallaba aunque Python estuviera bien. La detección ahora usa array (`@($args)`) y, si hace falta, busca `%LOCALAPPDATA%\Programs\Python\Python312\python.exe`.
+2. **Cerrá y abrí la terminal** después de instalar Python: el PATH se actualiza en una sesión nueva.
+3. Verificá a mano: `py -3.12 --version` o el `python.exe` de la carpeta `Python312`.
+4. Si sigue fallando: `winget install Python.Python.3.12` y volvé a correr `instalar.cmd`.
+
+</details>
+
+<details>
 <summary><b>No me entiende cuando digo «Asistemis»</b></summary>
 
 Acércate al micrófono y revisa que Windows use el correcto: *Configuración → Sistema → Sonido → Entrada*. Con `"registrar_lo_oido": true` en `ajustes.json` verás en `asistemis.log` qué está entendiendo.

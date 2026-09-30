@@ -105,7 +105,11 @@ Reducir consumo innecesario de CPU/RAM en Asistemis y añadir un modo de transcr
 - [x] T5 — estado DICTATING en Engine (commit 53f222c)
 - [x] T6 — ventana de dictado en vivo (commit 53f222c)
 - [x] T7 — comando de voz para iniciar dictado (commit 53f222c)
-- [ ] T8 — integración y verificación final (Pendiente: prueba manual del usuario + README)
+- [ ] T8 — integración y verificación final
+  - [x] Fix detección de Python en instalar.ps1 (splatting PS 5.1 + fallback a ruta Python312)
+  - [x] Documentado en README (Problemas frecuentes)
+  - [ ] Prueba manual del usuario (pendiente)
+  - [ ] README del dictado (pendiente tras probar)
 
 ## Prueba manual sugerida (antes del push)
 1. Nota larga con pausas: "Asistemis, anota … eso es todo" → se guarda completa (probe incremental).
