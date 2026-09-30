@@ -219,7 +219,7 @@ Por privacidad, Asistemis **no guarda lo que oye**. Si quieres ajustar la activa
 ## ❓ Problemas frecuentes
 
 > 📖 **Guía completa de bloqueos de Windows** (Smart App Control, antivirus, PyAV/ffmpeg):  
-> **[docs/bloqueos-windows.md](docs/bloqueos-windows.md)**
+> **[docs/bloqueos-windows.md](docs/bloqueos-windows.md)** — incluye cómo usar Asistemis **sin desactivar el antivirus** (§5).
 
 <details>
 <summary><b>«DLL load failed … Control de aplicaciones bloqueó este archivo»</b></summary>
