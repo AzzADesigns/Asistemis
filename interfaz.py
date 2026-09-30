@@ -100,6 +100,26 @@ def page(name):
     if "%ICON%" in html:
         icon = base64.b64encode((APP_DIR / "recursos" / "asistemis.png").read_bytes()).decode()
         html = html.replace("%ICON%", "data:image/png;base64," + icon)
+    # tema global: todas las ventanas escuchan applyTheme (Ajustes → Tema)
+    theme_js = """
+<script>
+function applyTheme(theme) {
+  const pref = theme || "dark";
+  document.documentElement.dataset.themePref = pref;
+  const t = pref === "system"
+    ? (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark")
+    : pref;
+  document.documentElement.dataset.theme = t;
+}
+window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
+  if (document.documentElement.dataset.themePref === "system") applyTheme("system");
+});
+</script>
+"""
+    if "</body>" in html:
+        html = html.replace("</body>", theme_js + "</body>", 1)
+    else:
+        html += theme_js
     return html
 
 
@@ -341,6 +361,10 @@ class Interface:
             self.main.show(activate=True)
         elif msg == "hide_main":
             self.main.hide()
+        elif msg == "help":
+            self.main.show(activate=True)
+            self.main.js("showView", "help")
+            self._rec("help", args)
         elif msg == "dictation_started":
             if self.rec.visible:  # recicló una nota en curso: el foco pasa al dictado
                 self.rec.js("leave")
@@ -388,7 +412,13 @@ class Interface:
                       "playing": ("ok", "Ya está sonando", "YouTube Music", 2.5),
                       "missing": ("muted", "No encontré YouTube Music", "¿Está instalada como app?", 3.5),
                       }.get(args[0] if args else "", ("error", "No pude darle play", "YouTube Music no respondió", 4.0)),
+            "music_stop": {"paused": ("ok", "Música pausada", "YouTube Music", 3.0),
+                           "already_paused": ("muted", "Ya estaba en pausa", "YouTube Music", 2.5),
+                           "not_open": ("muted", "YouTube Music no está abierta", "No había nada que pausar", 3.0),
+                           }.get(args[0] if args else "", ("error", "No pude pausar la música", "Probá «pausá» o la tecla del teclado", 4.0)),
             "order": ("claude", "Enviado a Claude", args[0] if args else "", 2.5),
+            "help": ("ok", args[0] if args else "Ayuda", args[1] if len(args) > 1 else "Mirá la pestaña Ayuda", 9.0),
+            "dictation_tip": ("rec", "Dictado activo", "Hablá… Cortar: «eso es todo» · «detené» · Listo", 7.0),
             "nothing": ("muted", "No entendí nada", "No se guardó nada", 3.0),
             "cancelled": ("muted", "Cancelado", "", 1.2),
             "error": ("error", "Error", args[0] if args else "", 8.0),
@@ -419,7 +449,7 @@ class Interface:
 
 
 class MainApi:
-    """Lo que puede pedir la ventana principal (notas, encendido y Claude)."""
+    """Lo que puede pedir la ventana principal (notas, encendido, Claude y ajustes)."""
 
     def __init__(self, iface, engine, chat):
         self._iface, self._engine, self._chat = iface, engine, chat
@@ -450,7 +480,7 @@ class MainApi:
         herramientas.move_task(int(task_id), status)
 
     def delete_task(self, task_id):
-        herramientas.delete_task(int(task_id))
+        herramientas.delete_task(task_id)
 
     def search(self, text):
         herramientas.web_search(text)
@@ -464,6 +494,12 @@ class MainApi:
 
     def power_state(self):
         return bool(self._engine.wake_by_voice)
+
+    def theme(self):
+        return herramientas.get_theme()
+
+    def set_theme(self, theme):
+        return herramientas.set_theme(theme)
 
     def claude_send(self, text):
         self._chat.submit(text, "escrita")

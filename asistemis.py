@@ -34,7 +34,7 @@ import pystray
 import sounddevice as sd
 from PIL import Image, ImageDraw
 
-from herramientas import (APP_DIR, DATA_DIR, FROZEN, HOTWORDS, NOTES_FILE, STATUSES, add_task, close_app, play_music,
+from herramientas import (APP_DIR, DATA_DIR, FROZEN, HOTWORDS, NOTES_FILE, STATUSES, add_task, close_app, pause_music, play_music,
                           delete_task, fold, installed_apps, move_task, open_app, save_note, web_search)
 from interfaz import Interface
 from ordenes import ClaudeChat
@@ -68,6 +68,162 @@ DICTATION_PARTIAL_MAX = 3.0  # o cada tanto, aunque no haya silencio
 # aparecer en el contenido: se acepta el riesgo de falso positivo a cambio de la comodidad
 DICTATION_STOP_PHRASES = ("eso es todo", "eso seria todo", "detene", "detente", "listo",
                           "finaliza", "termina la transcripcion", "ya esta")
+
+# --- Ayuda y preguntas -------------------------------------------------------
+# "Asistemis, ¿cómo funciona la transcripción?" → respuesta local
+# "Asistemis, ¿cómo detengo el dictado?" → cómo cortar
+# Otras preguntas → Claude (si está disponible)
+HELP = re.compile(
+    r"(?:ayud\w*|help|instrucc\w*|tutorial|gu[ií]a|manual|"
+    r"informaci[oó]n|qu[eé]\s+(?:comandos?|pod[eé]|hace|hay|uso|puedo)|"
+    r"c[oó]mo\s+(?:funciona|uso|hago|se\s+hace|lo\s+hago)|"
+    r"c[oó]mo\s+(?:deteng|deten|paro|par|cort|fren|termin|cierro|salgo|freno)|"
+    r"c[oó]mo\s+(?:funciona\s+la\s+)?(?:transcripci\w*|dictad\w*)|"
+    r"qu[eé]\s+puedo\s+decir|para\s+qu[eé]\s+sirve)"
+)
+QUESTION = re.compile(
+    r"^(?:qu[eé]|c[oó]mo|por\s+qu[eé]|d[oó]nde|cu[aá]ndo|cu[aá]l|cu[aá]nt[oa]|qui[eé]n|"
+    r"me\s+explic|explicame|puedes\s+decirme|sab[eé]s|para\s+qu[eé])"
+)
+LEAD = re.compile(r"(?:(?:por\s+favor|porfa|che|bueno|a\s+ver|eh|asistemis)\s+)*", re.I)
+
+HELP_TEXT = {
+    "general": (
+        "Cómo funciona Asistemis",
+        "Decí «Asistemis, …» y una acción.\n"
+        "• Nota: «Asistemis, anota comprar pan… eso es todo»\n"
+        "• Dictado largo: «Asistemis, mododictado» (ventana en vivo)\n"
+        "• App: «Asistemis, abrime Chrome»\n"
+        "• Tarea: «Asistemis, agregá la tarea terminar el informe»\n"
+        "• Música: «Asistemis, reproducime música»\n"
+        "• Pregunta o Claude: «Asistemis, ejecutá …»\n"
+        "• Ayuda: «Asistemis, ¿cómo funciona?» o pestaña Ayuda\n"
+        "Encender/apagar: Ctrl+Alt+N. Abrir ventana: icono junto al reloj."
+    ),
+    "dictado": (
+        "Transcripción por voz (dictado)",
+        "Iniciar: «Asistemis, mododictado» · «transcribí» · «empezá a dictar»\n"
+        "o botón Dictado en el menú del icono junto al reloj.\n\n"
+        "Hablá con normalidad: el texto aparece en la ventana «Transcribiendo…».\n"
+        "No hace falta repetir «Asistemis» durante el dictado.\n\n"
+        "CÓMO TERMINAR (importante):\n"
+        "1. Decí «eso es todo» o «detené»\n"
+        "2. Tocá el botón LISTO (guarda)\n"
+        "3. Cancelar = descarta (no guarda)\n"
+        "4. Ctrl+Alt+N guarda y sale\n\n"
+        "Se guarda como nota con tag [dictado] en la pestaña Notas."
+    ),
+    "stop": (
+        "Cómo se detiene la transcripción",
+        "Durante el DICTADO:\n"
+        "• Voz: «eso es todo» · «detené» · «listo»\n"
+        "• Botón LISTO = guardar y cortar\n"
+        "• Botón CANCELAR = descartar\n"
+        "• Ctrl+Alt+N = guardar y apagar Asistemis\n\n"
+        "Durante una NOTA («Asistemis, anota…»):\n"
+        "• «eso es todo» o ~15 s de silencio\n\n"
+        "El micrófono se cierra solo al apagar (Ctrl+Alt+N)."
+    ),
+    "notas": (
+        "Notas por voz",
+        "«Asistemis, anota comprar pan… eso es todo»\n"
+        "También: «apunta …»\n"
+        "La nota se guarda con fecha en la pestaña Notas.\n"
+        "Corta sola tras ~15 s de silencio.\n"
+        "Desde el menú del icono: «Anotar ahora» (sin decir Asistemis)."
+    ),
+    "tareas": (
+        "Tareas",
+        "«Asistemis, agregá la tarea terminar el informe»\n"
+        "«estoy haciendo la tarea 3» → En progreso\n"
+        "«terminé la tarea 3» → Finalizadas\n"
+        "«marcá la tarea 3 como pendiente»\n"
+        "«borrá la tarea 3»\n"
+        "Tablero en la pestaña Tareas de la ventana principal."
+    ),
+    "apps": (
+        "Abrir y cerrar apps",
+        "«Asistemis, abrime Chrome» / «iniciá Discord» / «jugá al God of War»\n"
+        "«Asistemis, cerrá Chrome»\n"
+        "«Asistemis, busca recetas de pizza»\n"
+        "Si ya estaba abierta, la trae al frente."
+    ),
+    "musica": (
+        "Música",
+        "«Asistemis, reproducime música»\n"
+        "«poné música» / «quiero escuchar música»\n\n"
+        "Para pausar o detener:\n"
+        "• «detene la música» / «pausá» / «stop música»\n"
+        "Necesita YouTube Music instalada como app."
+    ),
+    "power": (
+        "Encender y apagar",
+        "Ctrl+Alt+N → enciende / apaga el micrófono.\n"
+        "Al apagar, los modelos se descargan de la RAM.\n"
+        "Icono junto al reloj: doble clic abre la ventana;\n"
+        "clic derecho = menú (Anotar, Dictado, Ayuda, Salir)."
+    ),
+}
+
+
+def help_toast(topic):
+    return HELP_TEXT.get(topic, HELP_TEXT["general"])
+
+
+def help_or_question(text, start, end):
+    """('help', tema) o ('question', frase) si lo dicho es ayuda o una pregunta.
+    No roba órdenes reales (anota/abrime/buscá/…)."""
+    seg = fold(text[start:end]).strip(" ,.;:¡!¿?-—'\"")
+    if not seg:
+        return None
+    if re.match(r"(?:anot|apunt|abr|inici|arranc|lanz|jug|cerr|busc|ejecut|agreg|cre\w*|reproduc|pon[ea]|quiero\s+escuchar)", seg):
+        return None
+    lead = LEAD.match(seg)
+    body = (seg[lead.end():] if lead else seg).strip(" ,.;:¡!¿?-—'\"")
+    if not body:
+        return None
+    if HELP.match(body):
+        if re.search(r"deten|parar|cortar|frenar|termin|listo|eso\s+es\s+todo|apag|encend|ctrl", body):
+            return ("help", "stop")
+        if re.search(r"dictad|transcri", body):
+            return ("help", "dictado")
+        if re.search(r"tarea", body):
+            return ("help", "tareas")
+        if re.search(r"musica|youtube", body):
+            return ("help", "musica")
+        if re.search(r"nota|anota|apunta", body):
+            return ("help", "notas")
+        if re.search(r"abr|cerr|app|chrome|discord|steam", body):
+            return ("help", "apps")
+        if re.search(r"encend|apag|ctrl|bot[oó]n|icono|bandeja", body):
+            return ("help", "power")
+        return ("help", "general")
+    if QUESTION.match(body) and len(words(body)) >= 2:
+        return ("question", body[:1].upper() + body[1:])
+    return None
+
+
+def question_local_answer(question):
+    """Respuesta local si la pregunta es sobre Asistemis; si no, None (va a Claude)."""
+    q = fold(question)
+    # primero lo de "cómo lo detengo/corto" (aunque mencione "transcripción")
+    if re.search(r"deten|parar|cortar|frenar|c[oó]mo\s+(?:paro|det|cort|fren)|terminar\s+el\s+dictado|c[oó]mo\s+se\s+termina", q):
+        return HELP_TEXT["stop"]
+    if re.search(r"dictad|transcri", q):
+        return HELP_TEXT["dictado"]
+    if re.search(r"tarea", q):
+        return HELP_TEXT["tareas"]
+    if re.search(r"musica|youtube", q):
+        return HELP_TEXT["musica"]
+    if re.search(r"nota|anota", q):
+        return HELP_TEXT["notas"]
+    if re.search(r"abr|app|chrome|discord|steam|busc", q):
+        return HELP_TEXT["apps"]
+    if re.search(r"encend|apag|ctrl|micro", q):
+        return HELP_TEXT["power"]
+    if re.search(r"asistemis|comando|funciona|uso|c[oó]mo\s+te", q):
+        return HELP_TEXT["general"]
+    return None
 
 WHISPER_DIR = DATA_DIR / "models" / "whisper"
 LOG_FILE = DATA_DIR / "asistemis.log"
@@ -125,12 +281,12 @@ def similar(a, b):
 # "ejecutá <app o juego>" lo abre Asistemis; solo si no es una app se lo pasa a Claude
 COMMANDS = (("note", r"(?:anot|apunt)"), ("open", r"(?:abr[ie]|inici|arranc|lanz|jug)"),
             ("close", r"(?:cerr|cier)"), ("search", r"busc"), ("order", r"ejecut"))
-ACTIONS = ("open", "close", "search", "order", "task_add", "task_move", "music")  # se ejecutan en cuanto hay una pausa
+ACTIONS = ("open", "close", "search", "order", "task_add", "task_move", "music", "music_stop")  # se ejecutan en cuanto hay una pausa
 TASK_SILENCE = 1.5  # "agregá la tarea …" espera un poco más de silencio: la frase puede ser larga
 
 # dictado continuo: frases que lo inician (T7). "anota" NO cuenta: eso sigue siendo nota normal.
 DICTATION = re.compile(
-    r"(?:transcrib\w*|dictad\w*|modo\s+dictado|"
+    r"(?:transcrib\w*|dictad\w*|modo\s*dictado|"
     r"empez\w*\s+(?:a\s+)?(?:dictar|transcribir)|"
     r"inici\w*\s+(?:la\s+)?transcripci\w*)"
 )
@@ -155,11 +311,41 @@ TASK_ADD = re.compile(r"(?:agreg\w*|anot\w*|apunt\w*|cre\w*|nuev[ao])\s+(?:(?:la
 # música: "reproducí música", "reproducime música / youtube", "quiero escuchar música", "quiero música"
 MUSIC = re.compile(r"(?:reproduc\w*|quiero(?:\s+escuchar)?|pon[ea]\w*)\s+(?:(?:la|el|un[ao]?|algo\s+de|de)\s+)?"
                    r"(?:musica|youtube)\b")
+# pausar / detener: "detene la música", "pausá", "pará el youtube", "stop música"
+MUSIC_STOP = re.compile(
+    r"(?:deteng\w*|deten\w*|par[aá]|parar|paus\w*|stop|fren\w*|silenci\w*|baj\w*|corta\w*)"
+    r"(?:\s+(?:la|el|esa|esta|mi|tu|su|podes|podés|y|u))*"
+    r"(?:\s+(?:musica|cancion|canción|youtube|reproductor|play|sonido|tema|esto|eso))?"
+)
 
 
 def music_command(text, start, end):
     """("music", "YouTube Music") si lo dicho es para poner música, o None."""
     return ("music", "YouTube Music") if MUSIC.match(fold(text[start:end]).lstrip(" ,.;:¡!¿?")) else None
+
+
+def music_stop_command(text, start, end):
+    """("music_stop", "YouTube Music") si lo dicho es para pausar/detener música, o None.
+    No roba el dictado ni las notas: 'detene el dictado' / 'anota …' quedan fuera."""
+    seg = fold(text[start:end]).strip(" ,.;:¡!¿?-—'\"")
+    if not seg:
+        return None
+    if re.search(r"dictad|transcrib", seg):
+        return None
+    if re.match(r"(?:anot|apunt)", seg):
+        return None
+    # "pausa" / "stop" a secas: es media player, no otra cosa
+    if re.match(r"(?:paus\w*|stop)\b", seg):
+        return ("music_stop", "YouTube Music")
+    if not MUSIC_STOP.match(seg):
+        return None
+    core = re.sub(r"^(?:deteng\w*|deten\w*|par[aá]|parar|paus\w*|stop|fren\w*|silenci\w*|baj\w*|corta\w*)",
+                  "", seg).strip(" ,.;:¡!¿")
+    if re.search(r"musica|cancion|youtube|reproductor|play|sonido|tema", core):
+        return ("music_stop", "YouTube Music")
+    if re.match(r"^(?:esto|eso)\b", core):
+        return ("music_stop", "YouTube Music")
+    return None
 
 
 def dictation_command(text, start, end):
@@ -251,6 +437,12 @@ def parse(text):
         # inicio, así "buscá transcripción" / "abrime el dictado" siguen siendo órdenes.
         elif not with_note and (dictation := dictation_command(text, start, end)):
             return dictation
+        # pausar música antes de ayuda: "detene la música" no debe ir a "cómo cortar"
+        elif not with_note and (mstop := music_stop_command(text, start, end)):
+            return mstop
+        # ayuda / preguntas: "¿cómo funciona la transcripción?", "¿qué comandos hay?"
+        elif not with_note and (hq := help_or_question(text, start, end)):
+            return hq
         elif command_of(nxt):
             kind, start = command_of(nxt), tokens[k].end()
         elif nxt == "a" and len(tokens) > k + 1 and command_of(nxt + tokens[k + 1].group()) == "note":
@@ -261,6 +453,8 @@ def parse(text):
         return task
     elif music := music_command(text, 0, end):  # grabación con "Anotar ahora": "reproducime música"
         return music
+    elif mstop := music_stop_command(text, 0, end):  # "detene la música" / "pausa"
+        return mstop
     elif tokens and command_of(tokens[0].group()):  # grabación con Ctrl+Alt+N: "ejecuta …"
         kind, start = command_of(tokens[0].group()), tokens[0].end()
     else:
@@ -630,6 +824,8 @@ class Engine(threading.Thread):
         self.dictation_partial_at = None
         self.started = self.last_voice = time.monotonic()
         self.ui.put(("dictation_started",))
+        # tip de corte en el widget rec (no abre la ventana principal)
+        self.ui.put(("dictation_tip",))
 
     def _dictation_block(self, block):
         """Un bloque de audio durante el dictado: ventana rodante, nivel y parciales.
@@ -1067,6 +1263,22 @@ class Engine(threading.Thread):
                 if result in ("opened", "resumed", "playing"):
                     save_note(body, tag="[abrir]")
                 self.ui.put(("music", result or "missing"))
+            elif kind == "music_stop":
+                result = pause_music()
+                log.info("música pausa: %s", result)
+                self.ui.put(("music_stop", result or "failed"))
+            elif kind == "help":
+                title, detail = help_toast(body or "general")
+                log.info("ayuda: %s", body)
+                self.ui.put(("help", title, detail))
+            elif kind == "question":
+                local = question_local_answer(body)
+                if local:
+                    log.info("pregunta local: %s", body)
+                    self.ui.put(("help", local[0], local[1]))
+                else:
+                    log.info("pregunta → Claude: %s", body)
+                    self.ui.put(("order", body))
             elif kind == "search":
                 web_search(body)
                 save_note(body, tag="[buscar]")
@@ -1200,9 +1412,10 @@ def main():
     tray = pystray.Icon("asistemis", tray_image(), "Asistemis", menu=pystray.Menu(
         pystray.MenuItem("Abrir Asistemis", lambda: ui.put(("main",)), default=True),
         pystray.MenuItem("Encendido (Ctrl+Alt+N)", lambda: engine.commands.put("power"),
-                         checked=lambda item: engine.wake_by_voice),
+                         checked=lambda _: engine.wake_by_voice),
         pystray.MenuItem("Anotar ahora", lambda: engine.commands.put("toggle")),
         pystray.MenuItem("Dictado", lambda: engine.commands.put("start_dictation")),
+        pystray.MenuItem("Ayuda y comandos", lambda: ui.put(("help", "Ayuda", "Mirá la pestaña Ayuda de la ventana"))),
         pystray.MenuItem("Claude (Ctrl+Alt+C)", lambda: ui.put(("panel",))),
         pystray.MenuItem("Archivo de notas", open_notes),
         pystray.MenuItem("Salir", quit_app),

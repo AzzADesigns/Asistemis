@@ -4,7 +4,8 @@ param(
     [switch]$SinInicioAutomatico,   # no arrancar Asistemis con Windows
     [switch]$SinDescargarModelos,   # los modelos se descargarán al abrirlo la primera vez
     [switch]$SinAccesos,            # no crear accesos directos (instalación portátil)
-    [switch]$NoAbrir                # no abrir Asistemis al terminar
+    [switch]$NoAbrir,               # no abrir Asistemis al terminar
+    [switch]$NoCompilar             # no compilar el .exe (quedarse solo con el código)
 )
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
@@ -148,6 +149,54 @@ if (-not (Get-Command claude -ErrorAction SilentlyContinue)) {
     Write-Host 'para las órdenes con "ejecuta" instálalo desde https://claude.com/claude-code e inicia sesión con: claude' -ForegroundColor Yellow
 }
 
+# 6. Compilar .exe e instalarlo (usuarios sin experiencia: doble clic en el Escritorio)
+if (-not $NoCompilar) {
+    Paso 'Compilando Asistemis.exe (1-2 minutos)'
+    & $py -m pip install --quiet pyinstaller
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host 'No se pudo instalar PyInstaller; Asistemis quedará disponible desde el acceso del Escritorio al código.' -ForegroundColor Yellow
+    } else {
+        Get-Process Asistemis -ErrorAction SilentlyContinue | Stop-Process -Force
+        Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like 'python*' -and $_.CommandLine -like '*asistemis.py*' } |
+            ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+        Start-Sleep 1
+        & $py -m PyInstaller asistemis.spec --noconfirm --log-level WARN
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host 'Falló la compilación; se usará el acceso al código (pythonw + asistemis.py).' -ForegroundColor Yellow
+        } else {
+            $destino = Join-Path $env:LOCALAPPDATA 'Programs\Asistemis'
+            Paso "Instalando el .exe en $destino"
+            robocopy (Join-Path $root 'dist\Asistemis') $destino /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
+            if ($LASTEXITCODE -ge 8) { Write-Host 'Falló la copia del .exe.' -ForegroundColor Red }
+            $shell = New-Object -ComObject WScript.Shell
+            $destinosLnk = @([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('Programs'))
+            if (-not $SinInicioAutomatico) { $destinosLnk += [Environment]::GetFolderPath('Startup') }
+            foreach ($carpeta in $destinosLnk) {
+                $acceso = $shell.CreateShortcut((Join-Path $carpeta 'Asistemis.lnk'))
+                $acceso.TargetPath = Join-Path $destino 'Asistemis.exe'
+                $acceso.Arguments = ''
+                $acceso.WorkingDirectory = $destino
+                $acceso.IconLocation = (Join-Path $destino 'Asistemis.exe') + ',0'
+                $acceso.Description = 'Asistemis: notas y órdenes por voz'
+                if ($carpeta -eq [Environment]::GetFolderPath('Startup')) { $acceso.Arguments = ($acceso.Arguments + ' --segundo-plano').Trim() }
+                $acceso.Save()
+                Write-Host "  $carpeta\Asistemis.lnk -> Asistemis.exe"
+            }
+            Write-Host "`nListo: $destino\Asistemis.exe" -ForegroundColor Green
+            Write-Host 'En el Escritorio queda el acceso Asistemis (doble clic para abrir).' -ForegroundColor Green
+        }
+    }
+}
+
 if ($NoAbrir) { Paso 'Listo.'; exit 0 }
-Paso 'Listo. Abriendo Asistemis (icono junto al reloj; Ctrl+Alt+N lo enciende y apaga)'
-Start-Process -FilePath (Join-Path $root '.venv\Scripts\pythonw.exe') -ArgumentList ('"' + (Join-Path $root 'asistemis.py') + '"') -WorkingDirectory $root
+
+# Abrir el .exe si existe; si no, el código con el venv
+$exeInstalado = Join-Path $env:LOCALAPPDATA 'Programs\Asistemis\Asistemis.exe'
+if (Test-Path $exeInstalado) {
+    Paso 'Listo. Abriendo Asistemis.exe (icono junto al reloj; Ctrl+Alt+N lo enciende y apaga)'
+    Start-Process -FilePath $exeInstalado -WorkingDirectory (Split-Path $exeInstalado)
+} else {
+    Paso 'Listo. Abriendo Asistemis (icono junto al reloj; Ctrl+Alt+N lo enciende y apaga)'
+    Start-Process -FilePath (Join-Path $root '.venv\Scripts\pythonw.exe') -ArgumentList ('"' + (Join-Path $root 'asistemis.py') + '"') -WorkingDirectory $root
+}

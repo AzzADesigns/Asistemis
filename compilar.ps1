@@ -30,7 +30,8 @@ robocopy (Join-Path $root 'dist\Asistemis') $destino /MIR /NFL /NDL /NJH /NJS /N
 if ($LASTEXITCODE -ge 8) { Write-Host 'Falló la copia.' -ForegroundColor Red; exit 1 }
 
 $shell = New-Object -ComObject WScript.Shell
-$carpetas = @([Environment]::GetFolderPath('Programs'))
+# Escritorio + menú Inicio (+ Startup si no se pidió lo contrario)
+$carpetas = @([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('Programs'))
 if (-not $SinInicioAutomatico) { $carpetas += [Environment]::GetFolderPath('Startup') }
 foreach ($carpeta in $carpetas) {
     $acceso = $shell.CreateShortcut((Join-Path $carpeta 'Asistemis.lnk'))
@@ -41,6 +42,7 @@ foreach ($carpeta in $carpetas) {
     $acceso.Description = 'Asistemis: notas y órdenes por voz'
     if ($carpeta -eq [Environment]::GetFolderPath('Startup')) { $acceso.Arguments = ($acceso.Arguments + ' --segundo-plano').Trim() }
     $acceso.Save()
+    Write-Host "  $carpeta\Asistemis.lnk"
 }
 Start-Process (Join-Path $destino 'Asistemis.exe')
 Write-Host "`n==> Instalado y abierto." -ForegroundColor Cyan

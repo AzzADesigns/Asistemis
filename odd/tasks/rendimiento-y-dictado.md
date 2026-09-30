@@ -111,10 +111,47 @@ Reducir consumo innecesario de CPU/RAM en Asistemis y añadir un modo de transcr
   - [x] docs/bloqueos-windows.md — guía completa Smart App Control / antivirus / PyAV
   - [x] README enlaza la guía y documenta el error de Control de aplicaciones
   - [x] Acceso directo en Escritorio (instalar.ps1 + creado en esta máquina)
-  - [x] Instalación completa en la PC del usuario (modelos GPU, Asistemis corriendo)
-  - [ ] Prueba manual del usuario (nota / dictado)
-  - [ ] README del dictado (pendiente tras probar)
-  - [ ] Push de la rama (pendiente)
+- [x] Instalación completa en la PC del usuario (modelos GPU, Asistemis corriendo)
+- [x] Acceso directo en Escritorio
+- [x] .exe compilado e instalado en %LOCALAPPDATA%\Programs\Asistemis (sin commit: usuario pidió cambios locales)
+  - Desktop → Asistemis.exe corriendo, whisper en GPU
+  - instalar.ps1 ahora compila el .exe por defecto (-NoCompilar para saltarlo)
+  - compilar.ps1 crea acceso en Escritorio
+- [x] Ayuda por voz + pestaña Ayuda en la UI + botón en bandeja (sin commit)
+  - «¿cómo funciona?» / «¿qué comandos hay?» / «¿cómo detengo la transcripción?»
+  - Preguntas sobre Asistemis → respuesta local; otras → Claude
+  - dictate.html muestra cómo cortar; tip al iniciar dictado
+  - Tests parse: 9/9 OK
+  - .exe regenerado con estos cambios
+- [x] Botón Ajustes al lado de Encendido: tema Oscuro / Claro / Sistema (sin commit)
+  - Persistido en ajustes.json ("theme")
+  - base.css data-theme=light; page() inyecta applyTheme en todas las ventanas
+  - MainApi.theme / set_theme; herramientas.get_theme/set_theme
+  - Layout: engranaje ARIBA de Encendido; power height 46px fijo
+  - .exe regenerado
+- [x] Optimización de flujo de apps (sin commit)
+  - Índice precomputado (key + words) al cargar la lista
+  - Match exacto O(1), prefijo, fuzzy con poda real_quick_ratio/quick_ratio
+  - Caché de resultados find_app (45 s) y de juegos Steam (mtime de vdf)
+  - MRU: bonus a apps abiertas hace poco
+  - app_windows: match barato (título/exe) primero; COM AppUserModelID solo si falta
+  - Apertura: ShellExecuteW para AUMID; os.startfile para .lnk/.exe/steam://
+  - Fallback: atajos del menú Inicio + rutas comunes (Chrome, Firefox, VS Code, Discord, Spotify)
+  - Medido: 207 apps, find_app ~0–4 ms (antes fuzzy full list)
+  - Chrome no está instalado en esta PC (solo Brave remote) — find_app None es correcto
+  - Modal Ajustes: fondo opaco (#1c1e2a / #f7f8fc), sin bleed-through
+  - «abrime el navegador» → navegador predeterminado del sistema (ProgId http + fallbacks)
+  - Quitado alias "navegador"→Chrome; verbos abrime/inicia se limpian en find_app
+  - .exe regenerado
+- [x] Pausa/detener música por voz (sin commit → ahora commit detallado)
+  - «detene la música» / «pausá» / «stop música» / «pará el youtube»
+  - pause_music(): UIA sobre barra del reproductor + fallback tecla multimedia
+  - music_stop antes de help en parse (no robar "detene el dictado" al dictado real)
+  - Toastes en interfaz.py; ayuda de música actualizada
+  - Quitado open_app duplicado que había quedado en herramientas.py
+- [ ] Prueba manual del usuario (nota / dictado / ayuda / tema / apps / música)
+- [ ] README del dictado + comandos de ayuda + ajustes de tema + pausa música
+- [ ] Push de la rama (cuando el usuario confirme que funciona)
 
 ## Prueba manual sugerida (antes del push)
 1. Nota larga con pausas: "Asistemis, anota … eso es todo" → se guarda completa (probe incremental).

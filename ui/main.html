@@ -25,10 +25,59 @@ nav button.on svg { opacity: 1; }
 .badge:empty { display: none; }
 .grow { flex: 1; align-self: stretch; }
 .power { display: flex; align-items: center; gap: 9px; height: 46px; padding: 0 12px; border-radius: 12px;
-  background: rgba(255,255,255,0.09); box-shadow: inset 0 0 0 1px var(--line); font-weight: 600; font-size: 17.5px; }
+  background: rgba(255,255,255,0.09); box-shadow: inset 0 0 0 1px var(--line); font-weight: 600; font-size: 17.5px;
+  white-space: nowrap; flex: none; }
 .power:hover { background: var(--surface-hover); }
 .power .dot { width: 10px; height: 10px; }
 .power small { margin-left: auto; font-size: 14.5px; color: var(--faint); font-weight: 600; }
+.bottom { display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
+.gear { align-self: flex-start; width: 46px; height: 46px; border-radius: 12px; display: grid; place-items: center;
+  background: rgba(255,255,255,0.09); box-shadow: inset 0 0 0 1px var(--line); color: var(--muted); margin-bottom: 2px; }
+.gear:hover { background: var(--surface-hover); color: var(--ink); }
+[data-theme="light"] .side { background: rgba(0,0,0,0.04); }
+[data-theme="light"] nav button:hover, [data-theme="light"] .win:hover,
+[data-theme="light"] .gear:hover, [data-theme="light"] .power:hover { background: rgba(0,0,0,.07); color: var(--ink); }
+[data-theme="light"] .win.close:hover { background: rgba(220,38,38,.9); color: #fff; }
+[data-theme="light"] .search, [data-theme="light"] .add, [data-theme="light"] .status,
+[data-theme="light"] .col, [data-theme="light"] .card, [data-theme="light"] .compose { background: rgba(0,0,0,.04); }
+[data-theme="light"] .chip.on { background: rgba(0,0,0,.08); }
+[data-theme="light"] .mini, [data-theme="light"] .tag, [data-theme="light"] .day,
+[data-theme="light"] .badge { background: rgba(0,0,0,.07); }
+[data-theme="light"] .bubble, [data-theme="light"] .msg.you { color: #fff; }
+[data-theme="light"] .list::-webkit-scrollbar-thumb,
+[data-theme="light"] .cards::-webkit-scrollbar-thumb,
+[data-theme="light"] .chat::-webkit-scrollbar-thumb { background: rgba(0,0,0,.22); }
+[data-theme="light"] .col[data-status="hecha"] .card .text { text-decoration-color: rgba(0,0,0,.3); }
+[data-theme="light"] .note mark { color: inherit; }
+
+/* ---------- ajustes (modal tema) ---------- */
+.modal { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center;
+  background: rgba(8, 10, 16, .62); backdrop-filter: blur(10px) saturate(1.1); }
+.modal[hidden] { display: none; }
+.modal-card { width: min(430px, calc(100% - 40px)); padding: 22px 22px 18px; border-radius: 20px;
+  background: #1c1e2a; color: #f4f6fb;
+  box-shadow: 0 24px 60px rgba(0,0,0,.45), inset 0 0 0 1px rgba(255,255,255,.14); }
+[data-theme="light"] .modal-card { background: #f7f8fc; color: #171a22;
+  box-shadow: 0 24px 60px rgba(15,23,42,.22), inset 0 0 0 1px rgba(0,0,0,.1); }
+.modal-card h2 { margin: 0 0 4px; font: 600 22px "Segoe UI Variable Display", "Segoe UI", sans-serif; color: inherit; }
+.modal-card .sub { margin: 0 0 16px; font-size: 15.5px; color: rgba(244,246,251,.72); }
+[data-theme="light"] .modal-card .sub { color: rgba(23,26,34,.7); }
+.theme-row { display: flex; gap: 8px; margin-bottom: 18px; }
+.theme-opt { flex: 1; height: 78px; border-radius: 14px; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 6px; font-weight: 600; font-size: 15.5px;
+  background: rgba(255,255,255,.07); box-shadow: inset 0 0 0 1px rgba(255,255,255,.14); color: rgba(244,246,251,.7); }
+[data-theme="light"] .theme-opt { background: rgba(0,0,0,.04); box-shadow: inset 0 0 0 1px rgba(0,0,0,.1); color: rgba(23,26,34,.65); }
+.theme-opt:hover { color: #f4f6fb; background: rgba(255,255,255,.12); }
+[data-theme="light"] .theme-opt:hover { color: #171a22; background: rgba(0,0,0,.07); }
+.theme-opt.on { color: #fff; box-shadow: inset 0 0 0 2px rgba(139,92,246,.85); background: rgba(139,92,246,.2); }
+[data-theme="light"] .theme-opt.on { color: #171a22; box-shadow: inset 0 0 0 2px rgba(124,58,237,.75); background: rgba(124,58,237,.12); }
+.theme-opt .sw { width: 42px; height: 26px; border-radius: 8px; box-shadow: inset 0 0 0 1px rgba(255,255,255,.2); }
+[data-theme="light"] .theme-opt .sw { box-shadow: inset 0 0 0 1px rgba(0,0,0,.15); }
+.theme-opt[data-theme="dark"] .sw { background: linear-gradient(135deg, #1e1b2e, #0f1220); }
+.theme-opt[data-theme="light"] .sw { background: linear-gradient(135deg, #f4f6fb, #dbe3f0); }
+.theme-opt[data-theme="system"] .sw { background: linear-gradient(90deg, #0f1220 50%, #f4f6fb 50%); }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.modal-actions .btn.primary { background: linear-gradient(135deg, #7c3aed, #2563eb); color: #fff; }
 
 /* ---------- contenido ---------- */
 .content { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -153,9 +202,17 @@ textarea::placeholder, .add input::placeholder { color: var(--faint); }
       <button data-view="claude">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 17l.8 2.2L22 20l-2.2.8L19 23l-.8-2.2L16 20l2.2-.8z"/></svg>
         Claude</button>
+      <button data-view="help" title="Todos los comandos y cómo funciona">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 4 2c-.7.5-1.5 1-1.5 2v.5"/><circle cx="12" cy="17" r=".8" fill="currentColor"/></svg>
+        Ayuda</button>
     </nav>
     <div class="grow pywebview-drag-region"></div>
-    <button class="power" id="power" title="Encender / apagar"><span class="dot" id="pdot"></span><span id="ptext">…</span><small>Ctrl+Alt+N</small></button>
+    <div class="bottom">
+      <button class="gear" id="gear" title="Ajustes (tema de la app)">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3h.1a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5h.1a1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8v.1a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+      </button>
+      <button class="power" id="power" title="Encender / apagar"><span class="dot" id="pdot"></span><span id="ptext">…</span><small>Ctrl+Alt+N</small></button>
+    </div>
   </aside>
 
   <div class="content">
@@ -212,6 +269,45 @@ textarea::placeholder, .add input::placeholder { color: var(--faint); }
       </div>
     </section>
 
+    <section class="view" id="view-help">
+      <div class="tools">
+        <span class="hint">También podés pedirlo por voz: <b>«Asistemis, ¿cómo funciona?»</b> · <b>«¿cómo detengo la transcripción?»</b></span>
+      </div>
+      <div class="list" style="padding:8px 18px 24px; overflow-y:auto; font-size:15.5px; line-height:1.55;">
+        <h3 style="margin:12px 0 6px;">🔊 Cómo funciona la transcripción por voz</h3>
+        <p style="margin:0 0 8px; color:var(--muted);">Hay dos formas:</p>
+        <ul style="margin:0 0 12px; padding-left:1.2em;">
+          <li><b>Nota corta:</b> «Asistemis, anota comprar pan… eso es todo»</li>
+          <li><b>Dictado largo (transcripción continua):</b> «Asistemis, mododictado» o «transcribí» — se abre una ventana con el texto en vivo. No hace falta repetir «Asistemis».</li>
+        </ul>
+        <h3 style="margin:16px 0 6px;">🛑 Cómo se detiene (lo más importante)</h3>
+        <ul style="margin:0 0 12px; padding-left:1.2em;">
+          <li><b>Durante el dictado:</b> «eso es todo» · «detené» · botón <b>Listo</b> (guarda) · botón <b>Cancelar</b> (descarta) · Ctrl+Alt+N (guarda y apaga)</li>
+          <li><b>Durante una nota:</b> «eso es todo» o ~15 s de silencio</li>
+          <li><b>Micrófono:</b> se cierra solo al apagar con Ctrl+Alt+N</li>
+        </ul>
+        <h3 style="margin:16px 0 6px;">🗣️ Comandos de voz (empezá siempre con «Asistemis, …»)</h3>
+        <ul style="margin:0 0 12px; padding-left:1.2em;">
+          <li><b>Notas:</b> «anota … eso es todo» / «apunta …»</li>
+          <li><b>Dictado:</b> «mododictado» / «transcribí» / «empezá a dictar»</li>
+          <li><b>Apps:</b> «abrime Chrome» / «iniciá Discord» / «cerrá Chrome»</li>
+          <li><b>Internet:</b> «buscá recetas de pizza»</li>
+          <li><b>Tareas:</b> «agregá la tarea …» / «estoy haciendo la tarea 3» / «terminé la tarea 3» / «borrá la tarea 3»</li>
+          <li><b>Música:</b> «reproducime música»</li>
+          <li><b>Claude:</b> «ejecutá resumime las notas de hoy»</li>
+          <li><b>Ayuda:</b> «¿cómo funciona?» / «¿qué comandos hay?» / «¿cómo detengo el dictado?»</li>
+        </ul>
+        <h3 style="margin:16px 0 6px;">⌨️ Atajos y botones</h3>
+        <ul style="margin:0 0 12px; padding-left:1.2em;">
+          <li><b>Ctrl+Alt+N</b> — encender / apagar</li>
+          <li><b>Ctrl+Alt+C</b> — panel de Claude</li>
+          <li>Icono junto al reloj: doble clic = ventana; clic derecho = menú (Anotar, Dictado, <b>Ayuda</b>, Salir)</li>
+        </ul>
+        <h3 style="margin:16px 0 6px;">🤖 Preguntas</h3>
+        <p style="margin:0; color:var(--muted);">Las preguntas sobre Asistemis se responden al instante. Las demás se las pasamos a Claude (si está instalado): «Asistemis, ¿qué tiempo hace en Buenos Aires?»</p>
+      </div>
+    </section>
+
     <section class="view" id="view-claude">
       <div class="tools">
         <div class="status"><div class="dot ok" id="sdot"></div><span id="stext">Listo</span></div>
@@ -229,20 +325,37 @@ textarea::placeholder, .add input::placeholder { color: var(--faint); }
     </section>
   </div>
 </div>
+
+<div class="modal" id="settings" hidden>
+  <div class="modal-card">
+    <h2>Ajustes</h2>
+    <p class="sub">Tema de la aplicación. Se recuerda para la próxima vez.</p>
+    <div class="theme-row" id="themeRow">
+      <button class="theme-opt" data-theme="dark" type="button"><span class="sw"></span>Oscuro</button>
+      <button class="theme-opt" data-theme="light" type="button"><span class="sw"></span>Claro</button>
+      <button class="theme-opt" data-theme="system" type="button"><span class="sw"></span>Sistema</button>
+    </div>
+    <div class="modal-actions">
+      <button class="btn primary" type="button" onclick="closeSettings()">Listo</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const $ = id => document.getElementById(id);
 const api = () => pywebview.api;
 const esc = s => String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
-const TITLES = {notes: "Notas", tasks: "Tareas", claude: "Claude"};
+const TITLES = {notes: "Notas", tasks: "Tareas", claude: "Claude", help: "Ayuda"};
 const STATUS_ORDER = ["pendiente", "progreso", "hecha"];
 const STATUS_NAMES = {pendiente: "Pendiente", progreso: "En progreso", hecha: "Finalizada"};
 
 /* ---------- navegación y encendido ---------- */
 function showView(view) {
   document.querySelectorAll("nav button").forEach(b => b.classList.toggle("on", b.dataset.view === view));
-  for (const v in TITLES) $("view-" + v).classList.toggle("on", v === view);
-  $("title").textContent = TITLES[view];
-  ({notes: $("note"), tasks: $("taskText"), claude: $("order")})[view].focus();
+  for (const v in TITLES) { const el = $("view-" + v); if (el) el.classList.toggle("on", v === view); }
+  $("title").textContent = TITLES[view] || view;
+  const focusable = {notes: $("note"), tasks: $("taskText"), claude: $("order")};
+  if (focusable[view]) focusable[view].focus();
 }
 document.querySelectorAll("nav button").forEach(b => b.onclick = () => showView(b.dataset.view));
 function showTab(view) { showView(view === "notes" ? "notes" : view); }
@@ -251,6 +364,24 @@ function setPower(on) {
   $("ptext").textContent = on ? "Encendido" : "Apagado";
 }
 $("power").onclick = () => api().power();
+
+/* ---------- ajustes / tema ---------- */
+async function openSettings() {
+  $("settings").hidden = false;
+  markTheme(await api().theme());
+}
+function closeSettings() { $("settings").hidden = true; }
+function markTheme(theme) {
+  document.querySelectorAll(".theme-opt").forEach(b => b.classList.toggle("on", b.dataset.theme === theme));
+}
+async function chooseTheme(theme) {
+  const saved = await api().set_theme(theme);
+  applyTheme(saved);
+  markTheme(saved);
+}
+$("gear").onclick = openSettings;
+$("settings").addEventListener("click", e => { if (e.target === $("settings")) closeSettings(); });
+document.querySelectorAll(".theme-opt").forEach(b => { b.onclick = () => chooseTheme(b.dataset.theme); });
 
 /* ---------- notas ---------- */
 let notes = [], notesVersion = null, showActivity = true;
@@ -469,11 +600,12 @@ function focusInput() {}
 /* ---------- arranque ---------- */
 window.addEventListener("pywebviewready", async () => {
   setPower(await api().power_state());
+  applyTheme(await api().theme());
   loadNotes(true); loadTasks(true);
   setInterval(() => { if (!document.hidden) { loadNotes(false); loadTasks(false); } }, 1500);  // cambios por voz o de Claude
 });
 document.addEventListener("keydown", e => {
-  if (e.key === "Escape") api().close();
+  if (e.key === "Escape") { if (!$("settings").hidden) closeSettings(); else api().close(); }
   if (e.key === "F11") { e.preventDefault(); toggleMax(); }
 });
 
