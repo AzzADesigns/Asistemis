@@ -1,10 +1,11 @@
 ﻿"""Interfaz de Asistemis: ventanas HTML/CSS con cristal de Windows 11 (acrílico).
 
-Cuatro ventanas sin marco, creadas al arrancar y ocultas hasta que hacen falta:
-- toast:  "Asistemis encendido / apagado" (abajo a la derecha, se va sola).
-- mic:    burbuja redonda al costado mientras está encendido, con el uso de la GPU.
-- rec:    lo que se está grabando / transcribiendo / haciendo.
-- claude: conversación con Claude.
+Ventanas sin marco, creadas al arrancar y ocultas hasta que hacen falta:
+- toast:   "Asistemis encendido / apagado" (abajo a la derecha, se va sola).
+- mic:     burbuja redonda al costado mientras está encendido, con el uso de la GPU.
+- rec:     lo que se está grabando / transcribiendo / haciendo.
+- dictate: dictado continuo en vivo (texto creciente, botones Listo/Cancelar).
+- claude:  conversación con Claude.
 
 Las ventanas se muestran y ocultan con llamadas de Windows que no roban el foco
 (así no interrumpen un juego ni lo que estés escribiendo).
@@ -33,7 +34,8 @@ UI_DIR = APP_DIR / "ui"
 user32, dwmapi = ctypes.WinDLL("user32"), ctypes.windll.dwmapi
 
 # tamaños en píxeles CSS (se multiplican por la escala de Windows)
-SIZES = {"toast": (430, 92), "mic": (70, 70), "rec": (470, 210), "claude": (560, 800), "main": (1340, 880)}
+SIZES = {"toast": (430, 92), "mic": (70, 70), "rec": (470, 210), "claude": (560, 800),
+         "main": (1340, 880), "dictate": (520, 360)}
 MARGIN = 16
 TOAST_SECONDS = 2.6
 QUITTING = threading.Event()  # solo con esto activo se dejan cerrar las ventanas
@@ -254,6 +256,7 @@ class Interface:
         self.toast = Glass("toast")
         self.mic = Glass("mic", js_api=MicApi(self), round_=True)
         self.rec = Glass("rec", js_api=RecApi(engine))
+        self.dictate = Glass("dictate", js_api=DictateApi(engine))
         self.chat = chat_api
         self.claude = Glass("claude", js_api=chat_api, focus=True)
         self.main = Glass("main", js_api=MainApi(self, engine, chat_api), focus=True, app=True)
@@ -266,7 +269,7 @@ class Interface:
 
     def start(self):
         """Se llama desde webview.start: coloca las ventanas y atiende la cola."""
-        for g in (self.toast, self.mic, self.rec, self.claude, self.main):
+        for g in (self.toast, self.mic, self.rec, self.dictate, self.claude, self.main):
             g.ready.wait()
         left, top, right, bottom = work_area()
         s = self.toast.scale
@@ -275,6 +278,9 @@ class Interface:
         self.rec.place(right - self.rec.size[0] - m, bottom - self.rec.size[1] - m)
         self.mic.place(right - self.mic.size[0] - round(10 * s), top + (bottom - top) // 2 - self.mic.size[1] // 2)
         self.claude.place(right - self.claude.size[0] - m, top + m)
+        # dictado: centro-derecha, encima del widget de rec para no taparlo
+        self.dictate.place(right - self.dictate.size[0] - m,
+                           bottom - self.dictate.size[1] - m - self.rec.size[1] - round(12 * s))
         self.main.place((left + right - self.main.size[0]) // 2, (top + bottom - self.main.size[1]) // 2)
         threading.Thread(target=self._gpu_loop, daemon=True).start()
         self._loop()
@@ -290,13 +296,15 @@ class Interface:
                 levels.append(args[0])
             elif msg == "quit":
                 QUITTING.set()
-                for g in (self.toast, self.mic, self.rec, self.claude, self.main):
+                for g in (self.toast, self.mic, self.rec, self.dictate, self.claude, self.main):
                     g.win.destroy()
                 return
             elif msg:
                 self._handle(msg, args)
             if levels and (msg is None or len(levels) >= 3):
                 self.rec.js("levels", levels)
+                if self.dictate.visible:
+                    self.dictate.js("levels", levels)
                 levels = []
             self._timers()
 
@@ -333,11 +341,30 @@ class Interface:
             self.main.show(activate=True)
         elif msg == "hide_main":
             self.main.hide()
+        elif msg == "dictation_started":
+            if self.rec.visible:  # recicló una nota en curso: el foco pasa al dictado
+                self.rec.js("leave")
+                self.rec.hide()
+                self.hide_rec_at = None
+            self.dictate.js("start")
+            self.dictate.show()
+            self.mic.js("state", "rec")
+        elif msg == "dictation_delta":
+            self.dictate.js("appendDictation", args[0] if args else "")
+        elif msg in ("dictation_saved", "dictation_cancelled"):
+            self._hide_dictate()
+            self.mic.js("state", "idle")
+            self._rec(msg, args)
         elif msg == "chat":  # mensajes del chat con Claude: el panel y la pestaña de la ventana principal
             self.claude.js(*args)
             self.main.js(*args)
         else:
             self._rec(msg, args)
+
+    def _hide_dictate(self):
+        self.dictate.js("leave")
+        time.sleep(0.25)
+        self.dictate.hide()
 
     def _rec(self, msg, args):
         """El widget de grabación: escuchando, transcribiendo y el resultado."""
@@ -345,6 +372,8 @@ class Interface:
             "listening": ("rec", "Escuchando", "Di «eso es todo» para terminar", None),
             "transcribing": ("busy", "Transcribiendo…", "", None),
             "saved": ("ok", "Anotado", args[0] if args else "", 4.0),
+            "dictation_saved": ("ok", "Dictado guardado", "Nota con tag [dictado]", 3.5),
+            "dictation_cancelled": ("muted", "Dictado cancelado", "No se guardó nada", 2.0),
             "opened": ("ok", f"Abriendo {args[0]}" if args else "Abriendo", "", 2.5),
             "focused": ("ok", f"{args[0]} ya estaba abierto" if args else "", "Te lo traje al frente", 2.5),
             "closed": ("ok", f"Cerrando {args[0]}" if args else "Cerrando", "", 2.5),
@@ -478,3 +507,16 @@ class RecApi:
 
     def cancel(self):
         self._engine.commands.put("cancel")
+
+
+class DictateApi:
+    """Botones de la ventana de dictado en vivo."""
+
+    def __init__(self, engine):
+        self._engine = engine
+
+    def finish(self):
+        self._engine.commands.put("stop_dictation")
+
+    def cancel(self):
+        self._engine.commands.put("cancel_dictation")

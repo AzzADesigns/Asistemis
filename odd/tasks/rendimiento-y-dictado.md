@@ -98,16 +98,21 @@ Reducir consumo innecesario de CPU/RAM en Asistemis y añadir un modo de transcr
 ---
 
 ## Progreso
-- [ ] T1
-- [ ] T2
-- [ ] T3
-- [ ] T4
-- [ ] T5
-- [ ] T6
-- [ ] T7
+- [x] T1 — probe incremental (commit 6351cd2)
+- [x] T2 — RAM unload al apagar (commit 6351cd2)
+- [x] T3 — Claude perezoso (commit 6351cd2)
+- [x] T4 — RMS una sola vez (commit 6351cd2)
+- [x] T5 — Estado DICTATING en Engine (asistemis.py)
+- [x] T6 — Ventana de dictado en vivo (interfaz.py + ui/dictate.html)
+- [x] T7 — Comando de voz para iniciar dictado (parse + Engine)
 - [ ] T8
 
 ## Evidencia / Notas
 - Análisis de arquitectura completado (explore): problemas P1-P14 identificados con líneas.
 - Decisión de producto: salida = ventana en vivo + nota `[dictado]`.
 - Commit por work unit al terminar cada tarea.
+- T5-T7: dictado continuo con flag `dictating` sobre RECORDING; rolling window ~10 s;
+  parciales incrementales sin parse; frases de fin fuzzy sin wake word; UI Glass `dictate`
+  con botones Listo/Cancelar; parse detecta "transcribí / modo dictado / iniciá la transcripción"
+  solo al inicio de la frase (no roba "buscá transcripción" ni "iniciá Chrome").
+- py_compile OK en asistemis.py e interfaz.py; smoke test de parse: 0 fallas.
