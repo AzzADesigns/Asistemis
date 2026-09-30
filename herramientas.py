@@ -714,7 +714,9 @@ def close_app(query):
 
 MUSIC_APP = "YouTube Music"
 PLAY_NAMES = ("Reproducir", "Play")   # botón de la barra del reproductor (según el idioma de YT Music)
-PAUSE_NAMES = ("Pausar", "Pause")
+PAUSE_NAMES = ("Pausar", "Pause", "Pausa")
+# también botones que solo contienen la palabra (PWA de Brave/Chrome suelen variar)
+_PAUSE_HINTS = ("paus", "pause")
 
 
 def _buttons(window):
@@ -795,39 +797,67 @@ def _media_key(vk):
     user32.keybd_event(vk, 0, 2, 0)  # KEYEVENTF_KEYUP
 
 
+def _find_pause_button(buttons):
+    """Botón de pausa en la barra del reproductor (nombre exacto o que contenga 'paus')."""
+    for name, el in buttons:
+        if name in PAUSE_NAMES:
+            return el
+    for name, el in buttons:
+        nl = (name or "").lower()
+        if any(h in nl for h in _PAUSE_HINTS) and "reproduc" not in nl:
+            # "Pausar", "Pausa la canción", etc.; no "Reproducir"
+            return el
+    return None
+
+
+def _find_play_button(buttons):
+    for name, el in buttons:
+        if name in PLAY_NAMES:
+            return el
+    for name, el in buttons:
+        if name and name.startswith(PLAY_NAMES) and name not in PAUSE_NAMES:
+            if "reproduc" in name.lower() and len(name) <= 20:  # barra del player, no cada track
+                return el
+    return None
+
+
 def pause_music():
-    """Pausa YouTube Music si está sonando (UI Automation sobre la barra del reproductor).
-    Si no hay barra de reproductor, usa la tecla multimedia del sistema.
+    """Pausa YouTube Music (o lo que esté sonando).
+    1) UI Automation: botón «Pausar» de la barra del reproductor.
+    2) Si no aparece o ya está en pausa, tecla multimedia del sistema.
     Devuelve "paused", "already_paused", "not_open" o "failed"."""
     app = find_app(MUSIC_APP)
-    if not app:
-        return "not_open"
-    windows = app_windows(app)
-    if not windows:
-        return "not_open"
+    windows = app_windows(app) if app else []
     import uiautomation as auto
-    try:
-        with auto.UIAutomationInitializerInThread():
-            window = auto.ControlFromHandle(windows[0])
-            buttons = _buttons(window)
-            names = [n for n, _ in buttons]
-            if any(n in PAUSE_NAMES for n in names):
-                for n, e in buttons:
-                    if n in PAUSE_NAMES:
-                        auto.Control.CreateControlFromElement(e).GetInvokePattern().Invoke()
-                        time.sleep(0.3)
-                        return "paused"
-            if any(n in PLAY_NAMES for n in names):
-                return "already_paused"
-    except Exception:
-        pass
-    # fallback: tecla multimedia del teclado (pausa lo que esté sonando)
+    ui_result = None
+    if windows:
+        try:
+            with auto.UIAutomationInitializerInThread():
+                window = auto.ControlFromHandle(windows[0])
+                buttons = _buttons(window)
+                pause_el = _find_pause_button(buttons)
+                if pause_el is not None:
+                    auto.Control.CreateControlFromElement(pause_el).GetInvokePattern().Invoke()
+                    time.sleep(0.35)
+                    ui_result = "paused"
+                elif _find_play_button(buttons) is not None:
+                    ui_result = "already_paused"
+        except Exception:
+            ui_result = None
+    if ui_result == "paused":
+        return "paused"
+    if ui_result == "already_paused" and not windows:
+        return "not_open"
+    # fallback / si la app no expone la barra: tecla multimedia del sistema
     try:
         _media_key(0xB3)  # VK_MEDIA_PLAY_PAUSE
-        time.sleep(0.3)
-        return "paused"
+        time.sleep(0.35)
+        if ui_result == "already_paused":
+            # UI decía play pero igual mandamos pause: puede estar sonando otra app
+            return "paused"
+        return "paused" if windows else "not_open"
     except Exception:
-        return "failed"
+        return ui_result or ("failed" if windows else "not_open")
 
 
 def web_search(query):
