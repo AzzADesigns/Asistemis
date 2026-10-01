@@ -2,7 +2,7 @@
 
 Ctrl+Alt+N (pensado para un botón del mouse) lo enciende y lo apaga:
 - Encendido: escucha siempre "Asistemis…" y hace lo que se le pide.
-- Apagado: micrófono cerrado y modelo fuera de la GPU; no consume nada.
+- Apagado: micrófono cerrado y modelos descargados; no consume nada.
 
 - "Asistemis, anota <lo que sea>… eso es todo": nota con fecha en notas-asistemis.txt (escritorio).
 - "Asistemis, abrime Chrome" / "cerrá Chrome" / "busca <algo>" / "ejecuta <orden>": se hace en
@@ -34,7 +34,7 @@ import pystray
 import sounddevice as sd
 from PIL import Image, ImageDraw
 
-from herramientas import (APP_DIR, DATA_DIR, FROZEN, HOTWORDS, NOTES_FILE, STATUSES, add_task, close_app, play_music,
+from herramientas import (APP_DIR, DATA_DIR, FROZEN, HOTWORDS, NOTES_FILE, STATUSES, add_task, close_app, next_track, pause_music, play_music, prev_track,
                           delete_task, fold, installed_apps, move_task, open_app, save_note, web_search)
 from interfaz import Interface
 from ordenes import ClaudeChat
@@ -59,6 +59,173 @@ WHISPER_MODEL = "large-v3-turbo"  # transcribe la nota (small se equivoca mucho 
 LISTEN_MODEL = "base"      # sin tarjeta gráfica: más rápido, para escuchar continuamente
 LOG_HEARD = False          # se lee de ajustes.json ("registrar_lo_oido"): guarda en el log lo que oye
                            # y el audio de la última nota; útil para ajustar la activación, no por privacidad
+
+# --- Dictado continuo (T5/T7) ---
+DICTATION_SECONDS = 10.0   # ventana rodante de audio del dictado (~10 s; nunca se acumula ilimitado)
+DICTATION_PARTIAL_MIN = 2.0  # segundos de audio nuevo mínimo para lanzar un parcial
+DICTATION_PARTIAL_MAX = 3.0  # o cada tanto, aunque no haya silencio
+# frases que terminan el dictado (sin wake word durante el modo); "listo" es corta y puede
+# aparecer en el contenido: se acepta el riesgo de falso positivo a cambio de la comodidad
+DICTATION_STOP_PHRASES = ("eso es todo", "eso seria todo", "detene", "detente", "listo",
+                          "finaliza", "termina la transcripcion", "ya esta")
+
+# --- Ayuda y preguntas -------------------------------------------------------
+# "Asistemis, ¿cómo funciona la transcripción?" → respuesta local
+# "Asistemis, ¿cómo detengo el dictado?" → cómo cortar
+# Otras preguntas → Claude (si está disponible)
+HELP = re.compile(
+    r"(?:ayud\w*|help|instrucc\w*|tutorial|gu[ií]a|manual|"
+    r"informaci[oó]n|qu[eé]\s+(?:comandos?|pod[eé]|hace|hay|uso|puedo)|"
+    r"c[oó]mo\s+(?:funciona|uso|hago|se\s+hace|lo\s+hago)|"
+    r"c[oó]mo\s+(?:deteng|deten|paro|par|cort|fren|termin|cierro|salgo|freno)|"
+    r"c[oó]mo\s+(?:funciona\s+la\s+)?(?:transcripci\w*|dictad\w*)|"
+    r"qu[eé]\s+puedo\s+decir|para\s+qu[eé]\s+sirve)"
+)
+QUESTION = re.compile(
+    r"^(?:qu[eé]|c[oó]mo|por\s+qu[eé]|d[oó]nde|cu[aá]ndo|cu[aá]l|cu[aá]nt[oa]|qui[eé]n|"
+    r"me\s+explic|explicame|puedes\s+decirme|sab[eé]s|para\s+qu[eé])"
+)
+LEAD = re.compile(r"(?:(?:por\s+favor|porfa|che|bueno|a\s+ver|eh|asistemis)\s+)*", re.I)
+
+HELP_TEXT = {
+    "general": (
+        "Cómo funciona Asistemis",
+        "Decí «Asistemis, …» y una acción.\n"
+        "• Nota: «Asistemis, anota comprar pan… eso es todo»\n"
+        "• Dictado largo: «Asistemis, mododictado» (ventana en vivo)\n"
+        "• App: «Asistemis, abrime Chrome»\n"
+        "• Tarea: «Asistemis, agregá la tarea terminar el informe»\n"
+        "• Música: «Asistemis, reproducime música»\n"
+        "• Pregunta o Claude: «Asistemis, ejecutá …»\n"
+        "• Ayuda: «Asistemis, ¿cómo funciona?» o pestaña Ayuda\n"
+        "Encender/apagar: Ctrl+Alt+N. Abrir ventana: icono junto al reloj."
+    ),
+    "dictado": (
+        "Transcripción por voz (dictado)",
+        "Iniciar: «Asistemis, mododictado» · «transcribí» · «empezá a dictar»\n"
+        "o botón Dictado en el menú del icono junto al reloj.\n\n"
+        "Hablá con normalidad: el texto aparece en la ventana «Transcribiendo…».\n"
+        "No hace falta repetir «Asistemis» durante el dictado.\n\n"
+        "CÓMO TERMINAR (importante):\n"
+        "1. Decí «eso es todo» o «detené»\n"
+        "2. Tocá el botón LISTO (guarda)\n"
+        "3. Cancelar = descarta (no guarda)\n"
+        "4. Ctrl+Alt+N guarda y sale\n\n"
+        "Se guarda como nota con tag [dictado] en la pestaña Notas."
+    ),
+    "stop": (
+        "Cómo se detiene la transcripción",
+        "Durante el DICTADO:\n"
+        "• Voz: «eso es todo» · «detené» · «listo»\n"
+        "• Botón LISTO = guardar y cortar\n"
+        "• Botón CANCELAR = descartar\n"
+        "• Ctrl+Alt+N = guardar y apagar Asistemis\n\n"
+        "Durante una NOTA («Asistemis, anota…»):\n"
+        "• «eso es todo» o ~15 s de silencio\n\n"
+        "El micrófono se cierra solo al apagar (Ctrl+Alt+N)."
+    ),
+    "notas": (
+        "Notas por voz",
+        "«Asistemis, anota comprar pan… eso es todo»\n"
+        "También: «apunta …»\n"
+        "La nota se guarda con fecha en la pestaña Notas.\n"
+        "Corta sola tras ~15 s de silencio.\n"
+        "Desde el menú del icono: «Anotar ahora» (sin decir Asistemis)."
+    ),
+    "tareas": (
+        "Tareas",
+        "«Asistemis, agregá la tarea terminar el informe»\n"
+        "«estoy haciendo la tarea 3» → En progreso\n"
+        "«terminé la tarea 3» → Finalizadas\n"
+        "«marcá la tarea 3 como pendiente»\n"
+        "«borrá la tarea 3»\n"
+        "Tablero en la pestaña Tareas de la ventana principal."
+    ),
+    "apps": (
+        "Abrir y cerrar apps",
+        "«Asistemis, abrime Chrome» / «iniciá Discord» / «jugá al God of War»\n"
+        "«Asistemis, cerrá Chrome»\n"
+        "«Asistemis, busca recetas de pizza»\n"
+        "Si ya estaba abierta, la trae al frente."
+    ),
+    "musica": (
+        "Música",
+        "«Asistemis, reproducime música»\n"
+        "«poné música» / «quiero escuchar música»\n\n"
+        "Controles:\n"
+        "• Pausar: «detene la música» / «pausá» / «stop música»\n"
+        "• Siguiente: «siguiente canción» / «el siguiente tema»\n"
+        "• Anterior: «canción anterior» / «la anterior»\n\n"
+        "Necesita YouTube Music instalada como app."
+    ),
+    "power": (
+        "Encender y apagar",
+        "Ctrl+Alt+N → enciende / apaga el micrófono.\n"
+        "Al apagar, los modelos se descargan de la RAM.\n"
+        "Icono junto al reloj: doble clic abre la ventana;\n"
+        "clic derecho = menú (Anotar, Dictado, Ayuda, Salir)."
+    ),
+}
+
+
+def help_toast(topic):
+    return HELP_TEXT.get(topic, HELP_TEXT["general"])
+
+
+def help_or_question(text, start, end):
+    """('help', tema) o ('question', frase) si lo dicho es ayuda o una pregunta.
+    No roba órdenes reales (anota/abrime/buscá/…)."""
+    seg = fold(text[start:end]).strip(" ,.;:¡!¿?-—'\"")
+    if not seg:
+        return None
+    if re.match(r"(?:anot|apunt|abr|inici|arranc|lanz|jug|cerr|busc|ejecut|agreg|cre\w*|reproduc|pon[ea]|quiero\s+escuchar)", seg):
+        return None
+    lead = LEAD.match(seg)
+    body = (seg[lead.end():] if lead else seg).strip(" ,.;:¡!¿?-—'\"")
+    if not body:
+        return None
+    if HELP.match(body):
+        if re.search(r"deten|parar|cortar|frenar|termin|listo|eso\s+es\s+todo|apag|encend|ctrl", body):
+            return ("help", "stop")
+        if re.search(r"dictad|transcri", body):
+            return ("help", "dictado")
+        if re.search(r"tarea", body):
+            return ("help", "tareas")
+        if re.search(r"musica|youtube", body):
+            return ("help", "musica")
+        if re.search(r"nota|anota|apunta", body):
+            return ("help", "notas")
+        if re.search(r"abr|cerr|app|chrome|discord|steam", body):
+            return ("help", "apps")
+        if re.search(r"encend|apag|ctrl|bot[oó]n|icono|bandeja", body):
+            return ("help", "power")
+        return ("help", "general")
+    if QUESTION.match(body) and len(words(body)) >= 2:
+        return ("question", body[:1].upper() + body[1:])
+    return None
+
+
+def question_local_answer(question):
+    """Respuesta local si la pregunta es sobre Asistemis; si no, None (va a Claude)."""
+    q = fold(question)
+    # primero lo de "cómo lo detengo/corto" (aunque mencione "transcripción")
+    if re.search(r"deten|parar|cortar|frenar|c[oó]mo\s+(?:paro|det|cort|fren)|terminar\s+el\s+dictado|c[oó]mo\s+se\s+termina", q):
+        return HELP_TEXT["stop"]
+    if re.search(r"dictad|transcri", q):
+        return HELP_TEXT["dictado"]
+    if re.search(r"tarea", q):
+        return HELP_TEXT["tareas"]
+    if re.search(r"musica|youtube", q):
+        return HELP_TEXT["musica"]
+    if re.search(r"nota|anota", q):
+        return HELP_TEXT["notas"]
+    if re.search(r"abr|app|chrome|discord|steam|busc", q):
+        return HELP_TEXT["apps"]
+    if re.search(r"encend|apag|ctrl|micro", q):
+        return HELP_TEXT["power"]
+    if re.search(r"asistemis|comando|funciona|uso|c[oó]mo\s+te", q):
+        return HELP_TEXT["general"]
+    return None
 
 WHISPER_DIR = DATA_DIR / "models" / "whisper"
 LOG_FILE = DATA_DIR / "asistemis.log"
@@ -97,6 +264,17 @@ def heard_stop(text):
                for target in STOP_TARGETS for i in range(len(w)) for n in (2, 3, 4))
 
 
+DICTATION_STOP_TARGETS = [p.replace(" ", "") for p in DICTATION_STOP_PHRASES]
+
+
+def heard_dictation_stop(text):
+    """Frase que termina el modo dictado. Sin "Asistemis," al inicio; fuzzy como STOP_PHRASES.
+    n incluye 1 para palabras sueltas ("listo", "detene")."""
+    w = words(text)
+    return any(SequenceMatcher(None, "".join(w[i:i + n]), target).ratio() >= 0.8
+               for target in DICTATION_STOP_TARGETS for i in range(len(w)) for n in (1, 2, 3, 4, 5))
+
+
 def similar(a, b):
     return SequenceMatcher(None, a, b).ratio()
 
@@ -105,8 +283,16 @@ def similar(a, b):
 # "ejecutá <app o juego>" lo abre Asistemis; solo si no es una app se lo pasa a Claude
 COMMANDS = (("note", r"(?:anot|apunt)"), ("open", r"(?:abr[ie]|inici|arranc|lanz|jug)"),
             ("close", r"(?:cerr|cier)"), ("search", r"busc"), ("order", r"ejecut"))
-ACTIONS = ("open", "close", "search", "order", "task_add", "task_move", "music")  # se ejecutan en cuanto hay una pausa
+ACTIONS = ("open", "close", "search", "order", "task_add", "task_move", "music", "music_stop",
+           "music_next", "music_prev")  # se ejecutan en cuanto hay una pausa
 TASK_SILENCE = 1.5  # "agregá la tarea …" espera un poco más de silencio: la frase puede ser larga
+
+# dictado continuo: frases que lo inician (T7). "anota" NO cuenta: eso sigue siendo nota normal.
+DICTATION = re.compile(
+    r"(?:transcrib\w*|dictad\w*|modo\s*dictado|"
+    r"empez\w*\s+(?:a\s+)?(?:dictar|transcribir)|"
+    r"inici\w*\s+(?:la\s+)?transcripci\w*)"
+)
 
 # tareas: "agregá la tarea comprar pan", "estoy haciendo la tarea 3", "finalicé la tarea tres"
 NUMBER_WORDS = {w: i for i, w in enumerate(
@@ -128,11 +314,85 @@ TASK_ADD = re.compile(r"(?:agreg\w*|anot\w*|apunt\w*|cre\w*|nuev[ao])\s+(?:(?:la
 # música: "reproducí música", "reproducime música / youtube", "quiero escuchar música", "quiero música"
 MUSIC = re.compile(r"(?:reproduc\w*|quiero(?:\s+escuchar)?|pon[ea]\w*)\s+(?:(?:la|el|un[ao]?|algo\s+de|de)\s+)?"
                    r"(?:musica|youtube)\b")
+# pausar / detener: "detene la música", "pausá", "pará el youtube", "stop música"
+MUSIC_STOP = re.compile(
+    r"(?:deteng\w*|deten\w*|par[aá]|parar|paus\w*|stop|fren\w*|silenci\w*|baj\w*|corta\w*)"
+    r"(?:\s+(?:la|el|esa|esta|mi|tu|su|podes|podés|y|u))*"
+    r"(?:\s+(?:musica|cancion|canción|youtube|reproductor|play|sonido|tema|esto|eso))?"
+)
 
 
 def music_command(text, start, end):
     """("music", "YouTube Music") si lo dicho es para poner música, o None."""
     return ("music", "YouTube Music") if MUSIC.match(fold(text[start:end]).lstrip(" ,.;:¡!¿?")) else None
+
+
+def music_stop_command(text, start, end):
+    """("music_stop", "YouTube Music") si lo dicho es para pausar/detener música, o None.
+    No roba el dictado ni las notas: 'detene el dictado' / 'anota …' quedan fuera."""
+    seg = fold(text[start:end]).strip(" ,.;:¡!¿?-—'\"")
+    if not seg:
+        return None
+    if re.search(r"dictad|transcrib", seg):
+        return None
+    if re.match(r"(?:anot|apunt)", seg):
+        return None
+    # "pausa" / "stop" a secas: es media player, no otra cosa
+    if re.match(r"(?:paus\w*|stop)\b", seg):
+        return ("music_stop", "YouTube Music")
+    if not MUSIC_STOP.match(seg):
+        return None
+    core = re.sub(r"^(?:deteng\w*|deten\w*|par[aá]|parar|paus\w*|stop|fren\w*|silenci\w*|baj\w*|corta\w*)",
+                  "", seg).strip(" ,.;:¡!¿")
+    if re.search(r"musica|cancion|youtube|reproductor|play|sonido|tema", core):
+        return ("music_stop", "YouTube Music")
+    if re.match(r"^(?:esto|eso)\b", core):
+        return ("music_stop", "YouTube Music")
+    return None
+
+
+# siguiente / anterior pista: "siguiente canción", "el siguiente tema", "la anterior"
+_SKIP_LEAD = r"(?:(?:por\s+favor|porfa|che|bueno|a\s+ver|eh|la|el|lo|las|los|una|un|otra|otro|mi|tu|su)\s+)*"
+MUSIC_NEXT = re.compile(
+    _SKIP_LEAD + r"(?:siguiente|proxim\w*|next)\b"
+    r"(?:\s+(?:la|el|una|otra|cancion|canción|tema|pista|canci[oó]n|song))?"
+    r"|" + _SKIP_LEAD + r"(?:(?:cancion|canción|tema|pista|canci[oó]n)\s+(?:siguiente|proxim\w*|next))"
+)
+MUSIC_PREV = re.compile(
+    _SKIP_LEAD + r"(?:anterior|previ\w*|prev|atr[aá]s)\b"
+    r"(?:\s+(?:la|el|una|otra|cancion|canción|tema|pista|canci[oó]n|song))?"
+    r"|" + _SKIP_LEAD + r"(?:(?:cancion|canción|tema|pista|canci[oó]n)\s+(?:anterior|previ\w*|prev))"
+)
+
+
+def _music_skip_command(text, start, end):
+    """("music_next"|"music_prev", "YouTube Music") o None. No roba dictado ni notas."""
+    seg = fold(text[start:end]).strip(" ,.;:¡!¿?-—'\"")
+    if not seg:
+        return None
+    if re.search(r"dictad|transcrib", seg) or re.match(r"(?:anot|apunt)", seg):
+        return None
+    if MUSIC_NEXT.match(seg):
+        return ("music_next", "YouTube Music")
+    if MUSIC_PREV.match(seg):
+        return ("music_prev", "YouTube Music")
+    return None
+
+
+def dictation_command(text, start, end):
+    """("dictation", "") si lo dicho es para iniciar el modo dictado, o None.
+    Solo desde el camino con wake word: por botón ("Anotar ahora") no se activa dictado.
+    El patrón debe estar al inicio del segmento (tolerando relleno): así
+    "iniciá la transcripción" es dictado, pero "iniciá Chrome" u "hoy quiero transcribir X"
+    no lo son. "anota transcripción …" sigue siendo nota normal."""
+    seg = fold(text[start:end]).strip(" ,.;:¡!¿?-—'\"")
+    if not seg:
+        return None
+    if re.match(r"(?:anot|apunt)", seg):
+        return None
+    lead = re.match(r"(?:(?:por\s+favor|porfa|che|bueno|a\s+ver|eh)\s+)*", seg)
+    body = seg[lead.end():] if lead else seg
+    return ("dictation", "") if DICTATION.match(body) else None
 
 
 def command_of(token):
@@ -169,6 +429,7 @@ def parse(text):
     'Asistemis, ejecuta busca X, eso es todo.'     -> ('order', 'Busca X')
     'Asistemis, agregá la tarea comprar pan.'      -> ('task_add', 'Comprar pan')
     'Asistemis, estoy haciendo la tarea 3.'        -> ('task_move', '3:progreso')
+    'Asistemis, transcribí / modo dictado …'       -> ('dictation', '')
     Tolera lo que Whisper suele oír mal ('Asistemi zanato', 'eso que es todo') y el
     audio previo a "Asistemis" que entra en la grabación."""
     tokens = list(re.finditer(r"[a-z0-9]+", fold(text)))  # misma longitud que text
@@ -202,6 +463,19 @@ def parse(text):
         nxt = tokens[k].group() if len(tokens) > k else ""
         if with_note:  # "Asistemis anota" oído junto ("asisten sanota"): lo que sigue es la nota
             pass
+        # dictado continuo (T7): antes de command_of, para que "iniciá la transcripción"
+        # no caiga en open por el prefijo "inici". dictation_command exige el patrón al
+        # inicio, así "buscá transcripción" / "abrime el dictado" siguen siendo órdenes.
+        elif not with_note and (dictation := dictation_command(text, start, end)):
+            return dictation
+        # pausar música antes de ayuda: "detene la música" no debe ir a "cómo cortar"
+        elif not with_note and (mstop := music_stop_command(text, start, end)):
+            return mstop
+        elif not with_note and (mskip := _music_skip_command(text, start, end)):
+            return mskip
+        # ayuda / preguntas: "¿cómo funciona la transcripción?", "¿qué comandos hay?"
+        elif not with_note and (hq := help_or_question(text, start, end)):
+            return hq
         elif command_of(nxt):
             kind, start = command_of(nxt), tokens[k].end()
         elif nxt == "a" and len(tokens) > k + 1 and command_of(nxt + tokens[k + 1].group()) == "note":
@@ -212,6 +486,10 @@ def parse(text):
         return task
     elif music := music_command(text, 0, end):  # grabación con "Anotar ahora": "reproducime música"
         return music
+    elif mstop := music_stop_command(text, 0, end):  # "detene la música" / "pausa"
+        return mstop
+    elif mskip := _music_skip_command(text, 0, end):  # "siguiente canción" / "la anterior"
+        return mskip
     elif tokens and command_of(tokens[0].group()):  # grabación con Ctrl+Alt+N: "ejecuta …"
         kind, start = command_of(tokens[0].group()), tokens[0].end()
     else:
@@ -282,7 +560,19 @@ class Engine(threading.Thread):
         self.check_every = CHECK_EVERY
         self.probing = threading.Event()   # hay una transcripción de pausa en curso
         self.probed_at = None              # momento de voz que ya se transcribió en una pausa
-        # encendido: escucha "Asistemis"; apagado: micrófono cerrado y GPU libre
+        self.probe_offset = 0              # samples de chunks ya transcritos en sondas anteriores (T1)
+        self.probe_text = ""               # texto acumulado de las sondas, para no re-transcribir al final (T1)
+        self.recent_levels = deque(maxlen=CHECK_WINDOW)  # rms de los últimos N bloques: no recalcular (T4)
+        # dictado continuo (T5): solo transcripción, sin wake word ni parse de órdenes
+        self.dictating = False
+        self.dictation_finishing = False  # True mientras se transcribe/guarda el cierre
+        self.dictation_text = ""           # texto acumulado de los parciales (lo que ve la UI)
+        self.dictation_offset = 0          # samples del dictado ya transcritos en dictation_text
+        self.dictation_total = 0           # samples recibidos desde que empezó el dictado
+        self.dictation_audio = deque(maxlen=int(DICTATION_SECONDS * SR / BLOCK))  # ventana rodante ~10 s
+        self.dictation_probing = threading.Event()  # hay un parcial del dictado en curso
+        self.dictation_partial_at = None   # momento del último parcial
+        # encendido: escucha "Asistemis"; apagado: micrófono cerrado y modelos descargados
         self.wake_by_voice = load_settings().get("encendido", True)
         self.stream = None
         self.by_button = False
@@ -315,10 +605,15 @@ class Engine(threading.Thread):
                     self.preroll.append(block)
                     self._maybe_check(list(self.preroll), "wake")
                 elif self.state == self.RECORDING:
+                    if self.dictating:
+                        self._dictation_block(block)
+                        continue
                     self.chunks.append(block)
-                    self.ui.put(("level", level(block)))
+                    rms = level(block)  # se calcula una sola vez por bloque y se reutiliza (T4)
+                    self.ui.put(("level", rms))
+                    self.recent_levels.append(rms)
                     now = time.monotonic()
-                    if level(block) >= SPEECH_LEVEL:
+                    if rms >= SPEECH_LEVEL:
                         self.last_voice = now
                     self._maybe_check(self.chunks, "stop")
                     silent = now - self.last_voice
@@ -339,11 +634,16 @@ class Engine(threading.Thread):
         decirse bajando la voz, justo antes de callarse."""
         if self.blocks_seen % self.check_every or self.checking.is_set():
             return
-        if self.gpu and not self.whisper_ready.is_set():  # el modelo está volviendo a la GPU
-            return
+        if self.listener is None or (self.gpu and not self.whisper_ready.is_set()):
+            return  # modelos descargados al apagar, o el modelo está volviendo a la GPU
         window = blocks[-CHECK_WINDOW:]
         recent = window if kind == "stop" else window[-self.check_every:]
-        if max(level(b) for b in recent) < SPEECH_LEVEL:
+        # T4: en RECORDING los rms ya están en recent_levels; en IDLE se recalcula (pocos bloques)
+        if kind == "stop" and len(self.recent_levels) >= len(recent):
+            speech = max(list(self.recent_levels)[-len(recent):]) >= SPEECH_LEVEL
+        else:
+            speech = max(level(b) for b in recent) >= SPEECH_LEVEL
+        if not speech:
             return
         self.checking.set()
         audio = np.concatenate(window).astype(np.float32) / 32768
@@ -367,25 +667,42 @@ class Engine(threading.Thread):
             self.checking.clear()
 
     def _probe(self):
-        """Tras una pausa, transcribe lo dicho: si es una orden se ejecuta ya, sin esperar
-        a "eso es todo". En la CPU tarda ~7 s, así que solo se hace si la escucha ya oyó la orden."""
+        """Tras una pausa, transcribe lo nuevo desde la última sonda (incremental, no todo el audio):
+        si es una orden se ejecuta ya, sin esperar a "eso es todo". La ventana incluye 1 s de
+        contexto al inicio para no cortar palabras en el borde."""
         if self.probing.is_set() or not (self.gpu or self.opening):
             return
         self.probed_at = self.last_voice
         self.probing.set()
-        audio = np.concatenate(self.chunks).astype(np.float32) / 32768
-        threading.Thread(target=self._probe_run, args=(audio, self.generation, self.last_voice),
+        start_sample = max(0, self.probe_offset - SR)  # 1 s de solape al inicio
+        cum = 0
+        start_idx = 0
+        for i, block in enumerate(self.chunks):
+            if cum + len(block) > start_sample:
+                start_idx = i
+                break
+            cum += len(block)
+        else:
+            start_idx = len(self.chunks)
+        if start_idx >= len(self.chunks):  # no hay audio nuevo desde la última sonda
+            self.probing.clear()
+            return
+        audio = np.concatenate(self.chunks[start_idx:]).astype(np.float32) / 32768
+        total_samples = sum(len(b) for b in self.chunks)  # foto al empezar la sonda
+        threading.Thread(target=self._probe_run, args=(audio, self.generation, self.last_voice, total_samples),
                          daemon=True).start()
 
-    def _probe_run(self, audio, generation, voice_at):
+    def _probe_run(self, audio, generation, voice_at, new_offset):
         try:
             self.whisper_ready.wait()
+            if self.whisper is None:
+                raise RuntimeError("no se pudo cargar Whisper")
             segments, _ = self.whisper.transcribe(audio, language="es", beam_size=5, vad_filter=True, hotwords=HOTWORDS,
                                                   without_timestamps=True)
             text = "".join(s.text for s in segments).strip()
             if LOG_HEARD:
                 log.info("pausa: %s", text)
-            self.commands.put(("probe", generation, text, voice_at))
+            self.commands.put(("probe", generation, text, voice_at, new_offset))
         except Exception:
             log.exception("error al transcribir la pausa")
         finally:
@@ -431,24 +748,50 @@ class Engine(threading.Thread):
                 if generation != self.generation:
                     continue
             if cmd == "probe":
-                text, voice_at = rest
-                kind, body = parse(text)
+                segment, voice_at, new_offset = rest
+                self.probe_text = f"{self.probe_text} {segment}".strip() if self.probe_text else segment
+                self.probe_offset = new_offset
+                kind, body = parse(self.probe_text)  # se parsea el texto acumulado, no solo el segmento
+                # dictado por voz (T7): solo con wake word, nunca desde "Anotar ahora"
+                if kind == "dictation" and voice_at == self.last_voice and not self.by_button:
+                    self._start_dictation()
                 # solo si sigue callado desde entonces: si volvió a hablar, la orden no había terminado
-                if self.state == self.RECORDING and kind in ACTIONS and body and voice_at == self.last_voice:
+                elif self.state == self.RECORDING and kind in ACTIONS and body and voice_at == self.last_voice:
                     if kind == "task_add" and time.monotonic() - self.last_voice < TASK_SILENCE:
                         self.probed_at = None  # todavía puede estar dictándola: se vuelve a mirar
                     else:
-                        self._run_text(text)
+                        self._run_text(self.probe_text)
+            elif cmd == "dictation_partial":
+                if self.dictating and self.state == self.RECORDING:
+                    segment, new_offset = rest
+                    if segment:
+                        self.dictation_text = (f"{self.dictation_text} {segment}".strip()
+                                               if self.dictation_text else segment)
+                    self.dictation_offset = new_offset
+                    self.ui.put(("dictation_delta", self.dictation_text))
             elif cmd == "heard":
                 if self.state == self.IDLE:
                     self.last_heard = rest[0]
-                elif self.state == self.RECORDING:
+                elif self.state == self.RECORDING and not self.dictating:
                     self.heard.append(rest[0])
                     self.opening = self._is_opening(self.heard)
             elif cmd == "quit":
                 return False
             elif cmd == "power":
-                self._set_wake_by_voice(not self.wake_by_voice)
+                if self.dictating:
+                    # Ctrl+Alt+N durante el dictado: guarda por defecto y sale del modo
+                    self._stop_dictation(save=True)
+                else:
+                    self._set_wake_by_voice(not self.wake_by_voice)
+            elif cmd == "start_dictation":
+                if self.state == self.RECORDING or self.state == self.IDLE:
+                    self._start_dictation()
+            elif cmd == "stop_dictation" and self.dictating:
+                self._stop_dictation(save=True)
+            elif cmd == "cancel_dictation" and self.dictating:
+                self._stop_dictation(save=False)
+            elif cmd == "dictation_stop" and self.dictating:
+                self._stop_dictation(save=True)
             elif cmd == "wake" and self.state == self.IDLE:
                 log.info("palabra de activación detectada")
                 self._start(list(self.preroll), [self.last_heard])
@@ -457,23 +800,242 @@ class Engine(threading.Thread):
                 self._mic(True)
                 self._start([], [], by_button=True)
             elif cmd in ("toggle", "finish", "stop") and self.state == self.RECORDING:
-                self._finish()
+                if self.dictating:
+                    self._stop_dictation(save=True)
+                else:
+                    self._finish()
             elif cmd == "cancel" and self.state == self.RECORDING:
-                self.ui.put(("cancelled",))
-                self._idle()
-            elif cmd == "done":
+                if self.dictating:
+                    self._stop_dictation(save=False)
+                else:
+                    self.ui.put(("cancelled",))
+                    self._idle()
+            elif cmd == "done" and not self.dictating and not self.dictation_finishing:
                 self._idle()
 
     def _start(self, preroll, heard, by_button=False):
         self._ensure_gpu()
+        self.dictating = False  # una nota normal nunca hereda el modo dictado
         self.by_button = by_button  # con el botón, termina la segunda pulsación (no una pausa)
         self.state = self.RECORDING
         self.generation += 1
         self.chunks = preroll
+        self.probe_text = ""
+        self.probe_offset = 0
+        self.recent_levels.clear()
         self.heard = heard
         self.opening = self._is_opening(heard)
         self.started = self.last_voice = time.monotonic()
         self.ui.put(("listening",))
+
+    # --- Dictado continuo (T5) ---
+
+    def _start_dictation(self):
+        """Modo dictado: solo transcripción en vivo. Sin wake word, probe ni parse de órdenes.
+        Si había una nota en curso se recicla limpio (generation nueva, buffers vacíos)."""
+        log.info("dictado iniciado")
+        if self.state == self.TRANSCRIBING:
+            return  # no se interrumpe la transcripción de una nota u orden
+        if not self.stream or not self.stream.active:
+            self._mic(True)  # dictado desde el botón con el mic apagado
+        self._ensure_gpu()
+        self.dictating = True
+        self.dictation_finishing = False
+        self.by_button = False  # el dictado no termina con la segunda pulsación del botón
+        self.state = self.RECORDING
+        self.generation += 1
+        self.chunks = []
+        self.preroll.clear()
+        self.probe_text = ""
+        self.probe_offset = 0
+        self.recent_levels.clear()
+        self.heard = []
+        self.opening = False
+        self.dictation_text = ""
+        self.dictation_offset = 0
+        self.dictation_total = 0
+        self.dictation_audio = deque(maxlen=int(DICTATION_SECONDS * SR / BLOCK))
+        self.dictation_probing.clear()
+        self.dictation_partial_at = None
+        self.started = self.last_voice = time.monotonic()
+        self.ui.put(("dictation_started",))
+        # tip de corte en el widget rec (no abre la ventana principal)
+        self.ui.put(("dictation_tip",))
+
+    def _dictation_block(self, block):
+        """Un bloque de audio durante el dictado: ventana rodante, nivel y parciales.
+        No probe, no parse, no cierre por silencio ni por MAX_SECONDS."""
+        self.dictation_audio.append(block)
+        self.dictation_total += len(block)
+        rms = level(block)
+        self.ui.put(("level", rms))
+        self.recent_levels.append(rms)
+        now = time.monotonic()
+        if rms >= SPEECH_LEVEL:
+            self.last_voice = now
+        self._maybe_check_dictation()
+        silent = now - self.last_voice
+        new_audio = self.dictation_total - self.dictation_offset
+        min_new = int(DICTATION_PARTIAL_MIN * SR)
+        if (not self.dictation_probing.is_set() and new_audio >= min_new
+                and (silent >= COMMAND_SILENCE
+                     or now - (self.dictation_partial_at or 0) >= DICTATION_PARTIAL_MAX)):
+            self._dictation_partial()
+
+    def _maybe_check_dictation(self):
+        """Cada pocos bloques, si alguien habla, mira si pide terminar el dictado
+        (sin wake word: las frases de fin no necesitan «Asistemis,»)."""
+        if self.blocks_seen % self.check_every or self.checking.is_set():
+            return
+        if self.listener is None:
+            return
+        window = list(self.dictation_audio)[-CHECK_WINDOW:]
+        if not window or max(level(b) for b in window) < SPEECH_LEVEL:
+            return
+        self.checking.set()
+        audio = np.concatenate(window).astype(np.float32) / 32768
+        threading.Thread(target=self._check_dictation, args=(audio, self.generation), daemon=True).start()
+
+    def _check_dictation(self, audio, generation):
+        try:
+            segments, _ = self.listener.transcribe(audio, language="es", beam_size=1, vad_filter=True,
+                                                   condition_on_previous_text=False)
+            text = "".join(s.text for s in segments).strip()
+            if text and LOG_HEARD:
+                log.info("oído (dictado): %s", text)
+            if text and heard_dictation_stop(text):
+                self.commands.put(("dictation_stop", generation))
+        except Exception:
+            log.exception("error al escuchar el dictado")
+        finally:
+            self.checking.clear()
+
+    def _dictation_partial(self):
+        """Transcribe el audio nuevo desde el último parcial (incremental, sin parse).
+        La ventana rodante (~10 s) garantiza que nunca se acumule audio ilimitado."""
+        if self.dictation_probing.is_set():
+            return
+        start_sample = self.dictation_offset
+        end_sample = self.dictation_total
+        if end_sample - start_sample < int(0.4 * SR):  # demasiado poco: no se gasta CPU
+            return
+        audio = self._dictation_slice(start_sample, end_sample)
+        if audio is None:
+            return
+        self.dictation_probing.set()
+        self.dictation_partial_at = time.monotonic()
+        threading.Thread(target=self._dictation_partial_run,
+                         args=(audio, self.generation, end_sample), daemon=True).start()
+
+    def _dictation_partial_run(self, audio, generation, new_offset):
+        try:
+            # CPU: si turbo aún no está listo, los parciales van con el listener (base);
+            # no se bloquea el hilo principal esperando el modelo grande.
+            model = None
+            if self.whisper is not None and self.whisper_ready.is_set():
+                model = self.whisper
+            elif self.listener is not None:
+                model = self.listener
+            else:
+                self.whisper_ready.wait()
+                model = self.whisper if self.whisper is not None else self.listener
+            if model is None:
+                raise RuntimeError("no hay ningún modelo de Whisper disponible")
+            beam = 1 if model is self.listener else 3  # parcial en vivo: ir rápido
+            segments, _ = model.transcribe(audio, language="es", beam_size=beam, vad_filter=True,
+                                           condition_on_previous_text=False)
+            text = "".join(s.text for s in segments).strip()
+            if LOG_HEARD:
+                log.info("dictado parcial: %s", text)
+            self.commands.put(("dictation_partial", generation, text, new_offset))
+        except Exception:
+            log.exception("error al transcribir el dictado")
+        finally:
+            self.dictation_probing.clear()
+
+    def _dictation_slice(self, start_sample, end_sample):
+        """Audio float32 del dictado entre muestras absolutas, solo si siguen en la ventana."""
+        chunks = list(self.dictation_audio)
+        held = sum(len(b) for b in chunks)
+        oldest = self.dictation_total - held
+        if end_sample <= oldest or start_sample >= self.dictation_total:
+            return None
+        take_from = max(start_sample, oldest)
+        blocks = []
+        cum = 0
+        for block in chunks:
+            block_start = oldest + cum
+            cum += len(block)
+            block_end = block_start + len(block)
+            if block_end <= take_from or block_start >= end_sample:
+                continue
+            s = max(0, take_from - block_start)
+            e = min(len(block), end_sample - block_start)
+            blocks.append(block[s:e])
+        if not blocks:
+            return None
+        return np.concatenate(blocks).astype(np.float32) / 32768
+
+    def _stop_dictation(self, save=True):
+        """Termina el modo dictado. save=True guarda como nota con tag [dictado]."""
+        if not self.dictating:
+            return
+        log.info("dictado %s", "guardando" if save else "cancelando")
+        self.dictating = False
+        self.dictation_finishing = True
+        self.state = self.TRANSCRIBING
+        self.generation += 1  # descarta parciales en vuelo
+        self.dictation_probing.clear()
+        text = self.dictation_text
+        offset = self.dictation_offset
+        tail = self._dictation_slice(offset, self.dictation_total)
+        self.dictation_audio.clear()
+        self.dictation_text = ""
+        self.dictation_offset = 0
+        self.dictation_total = 0
+        self.recent_levels.clear()
+        if save and tail is not None:
+            # transcribe la cola (lo no cubierto por los parciales) y suma al texto
+            threading.Thread(target=self._dictation_tail_run,
+                             args=(tail, text), daemon=True).start()
+        else:
+            self._dictation_commit(text, save)
+
+    def _dictation_tail_run(self, audio, text_so_far):
+        try:
+            self.whisper_ready.wait()
+            model = self.whisper if self.whisper is not None else self.listener
+            if model is None:
+                raise RuntimeError("no se pudo cargar Whisper")
+            segments, _ = model.transcribe(audio, language="es", beam_size=5, vad_filter=True,
+                                           without_timestamps=True)
+            tail = "".join(s.text for s in segments).strip()
+            text = f"{text_so_far} {tail}".strip() if tail else text_so_far
+        except Exception as e:
+            log.exception("error al transcribir el final del dictado")
+            text = (text_so_far or "").strip()
+            if not text:
+                self.ui.put(("error", str(e)))
+                self._idle()
+                return
+        self._dictation_commit(text, save=True)
+
+    def _dictation_commit(self, text, save):
+        try:
+            text = (text or "").strip()
+            if save and text:
+                save_note(text, tag="[dictado]")
+                log.info("dictado guardado (%s caracteres)", len(text))
+                self.ui.put(("dictation_saved", text))
+            elif save:
+                self.ui.put(("nothing",))
+            else:
+                self.ui.put(("dictation_cancelled",))
+        except Exception as e:
+            log.exception("error al guardar el dictado")
+            self.ui.put(("error", str(e)))
+        finally:
+            self._idle()
 
     @staticmethod
     def _is_opening(heard):
@@ -487,6 +1049,9 @@ class Engine(threading.Thread):
         self.state = self.TRANSCRIBING
         self.generation += 1
         self.chunks = []
+        self.probe_text = ""
+        self.probe_offset = 0
+        self.recent_levels.clear()
         threading.Thread(target=self._act, args=(text,), daemon=True).start()
 
     def _finish(self):
@@ -497,16 +1062,50 @@ class Engine(threading.Thread):
         self.state = self.TRANSCRIBING
         self.generation += 1
         self.ui.put(("transcribing",))
-        audio = np.concatenate(self.chunks).astype(np.float32) / 32768
-        self.chunks = []
-        threading.Thread(target=self._transcribe, args=(audio,), daemon=True).start()
+        total_samples = sum(len(c) for c in self.chunks)
+        probe_text, probe_offset = self.probe_text, self.probe_offset
+        self.probe_text = ""
+        self.probe_offset = 0
+        self.recent_levels.clear()
+        # T1: si las sondas ya cubrieron casi todo el audio, no se re-transcribe todo:
+        # se transcribe solo la cola y se suma al texto acumulado
+        if probe_text and total_samples and probe_offset >= total_samples * 0.9:
+            cum = 0
+            start_idx = 0
+            for i, block in enumerate(self.chunks):
+                if cum + len(block) > probe_offset:
+                    start_idx = i
+                    break
+                cum += len(block)
+            tail_blocks = self.chunks[start_idx:]
+            self.chunks = []
+            if tail_blocks:
+                audio = np.concatenate(tail_blocks).astype(np.float32) / 32768
+                threading.Thread(target=self._transcribe_tail, args=(audio, probe_text), daemon=True).start()
+            else:
+                log.info("nota completa desde las sondas")
+                self._act(probe_text)
+        else:
+            audio = np.concatenate(self.chunks).astype(np.float32) / 32768
+            self.chunks = []
+            threading.Thread(target=self._transcribe, args=(audio,), daemon=True).start()
 
     def _idle(self):
         self.chunks = []
         self.preroll.clear()
+        self.probe_text = ""
+        self.probe_offset = 0
+        self.recent_levels.clear()
         self.generation += 1
         self.state = self.IDLE
         self.by_button = False
+        self.dictating = False
+        self.dictation_finishing = False
+        self.dictation_text = ""
+        self.dictation_offset = 0
+        self.dictation_total = 0
+        self.dictation_audio.clear()
+        self.dictation_probing.clear()
         if not self.wake_by_voice:
             self._mic(False)
 
@@ -526,10 +1125,17 @@ class Engine(threading.Thread):
         save_settings({**load_settings(), "encendido": on})
         log.info("Asistemis %s", "encendido" if on else "apagado")
         if on:
-            self._ensure_gpu()
+            if self.whisper is None or self.listener is None:
+                # los modelos se descargaron de la RAM al apagar: recargarlos
+                # (tradeoff: el primer arranque tras apagar es más lento)
+                threading.Thread(target=self._load_models, daemon=True).start()
+            else:
+                self._ensure_gpu()
             self._mic(True)
         else:
-            if self.state == self.RECORDING:  # apagar corta lo que se estaba grabando
+            if self.dictating:  # apagar durante el dictado: guarda por defecto
+                self._stop_dictation(save=True)
+            elif self.state == self.RECORDING:  # apagar corta lo que se estaba grabando
                 self._idle()
             elif self.state == self.IDLE:
                 self._mic(False)
@@ -551,13 +1157,25 @@ class Engine(threading.Thread):
             self.whisper_ready.set()
 
     def _maybe_unload(self):
-        """Apagado, libera la memoria de la GPU en cuanto nada está usando el modelo."""
-        if (self.gpu and self.gpu_loaded and not self.wake_by_voice and self.state == self.IDLE
+        """Apagado, libera la memoria de los modelos en cuanto nada está usando uno.
+        Al apagar de verdad (wake desactivado) se descargan también de la RAM de la CPU:
+        large-v3-turbo int8 ocupa 1-2 GB que no deberían quedarse residentes para siempre.
+        Tradeoff documentado: al reencender hay que recargar los modelos (arranque más lento).
+        Si solo se cierra la UI pero Asistemis sigue escuchando (wake encendido), no se toca nada."""
+        if not (self.state == self.IDLE and not self.wake_by_voice
                 and self.whisper_ready.is_set() and not self.checking.is_set() and not self.probing.is_set()):
+            return
+        if self.gpu and self.gpu_loaded:
             self.whisper_ready.clear()
-            self.whisper.model.unload_model(to_cpu=True)  # queda en la RAM: vuelve rápido
+            self.whisper.model.unload_model(to_cpu=True)  # en GPU: primero a la RAM…
             self.gpu_loaded = False
             log.info("modelo fuera de la GPU")
+        # …y al apagar del todo se descarga también de la RAM de la CPU (T2)
+        if self.whisper is not None or self.listener is not None:
+            self.whisper_ready.clear()
+            self.whisper = None
+            self.listener = None
+            log.info("modelos descargados de la RAM")
 
     def _load_models(self):
         """Con tarjeta NVIDIA, un solo modelo "turbo" en la GPU escucha y transcribe (~0,3 s).
@@ -617,6 +1235,25 @@ class Engine(threading.Thread):
             return
         self._act(text)
 
+    def _transcribe_tail(self, audio, probe_text):
+        """Transcribe solo el final no cubierto por las sondas y lo suma al texto acumulado."""
+        try:
+            self.whisper_ready.wait()
+            if self.whisper is None:
+                raise RuntimeError("no se pudo cargar Whisper")
+            segments, _ = self.whisper.transcribe(audio, language="es", beam_size=5, vad_filter=True, hotwords=HOTWORDS,
+                                                  without_timestamps=True)
+            tail_text = "".join(s.text for s in segments).strip()
+            text = f"{probe_text} {tail_text}".strip() if tail_text else probe_text
+            if LOG_HEARD:
+                log.info("nota incremental: %s", text)
+        except Exception as e:
+            log.exception("error al transcribir")
+            self.ui.put(("error", str(e)))
+            self.commands.put("done")
+            return
+        self._act(text)
+
     def _act(self, text):
         """Hace lo que se pidió: anotar, abrir, buscar o pasárselo a Claude."""
         try:
@@ -661,6 +1298,30 @@ class Engine(threading.Thread):
                 if result in ("opened", "resumed", "playing"):
                     save_note(body, tag="[abrir]")
                 self.ui.put(("music", result or "missing"))
+            elif kind == "music_stop":
+                result = pause_music()
+                log.info("música pausa: %s", result)
+                self.ui.put(("music_stop", result or "failed"))
+            elif kind == "music_next":
+                result = next_track()
+                log.info("música siguiente: %s", result)
+                self.ui.put(("music_next", result or "failed"))
+            elif kind == "music_prev":
+                result = prev_track()
+                log.info("música anterior: %s", result)
+                self.ui.put(("music_prev", result or "failed"))
+            elif kind == "help":
+                title, detail = help_toast(body or "general")
+                log.info("ayuda: %s", body)
+                self.ui.put(("help", title, detail))
+            elif kind == "question":
+                local = question_local_answer(body)
+                if local:
+                    log.info("pregunta local: %s", body)
+                    self.ui.put(("help", local[0], local[1]))
+                else:
+                    log.info("pregunta → Claude: %s", body)
+                    self.ui.put(("order", body))
             elif kind == "search":
                 web_search(body)
                 save_note(body, tag="[buscar]")
@@ -794,8 +1455,10 @@ def main():
     tray = pystray.Icon("asistemis", tray_image(), "Asistemis", menu=pystray.Menu(
         pystray.MenuItem("Abrir Asistemis", lambda: ui.put(("main",)), default=True),
         pystray.MenuItem("Encendido (Ctrl+Alt+N)", lambda: engine.commands.put("power"),
-                         checked=lambda item: engine.wake_by_voice),
+                         checked=lambda _: engine.wake_by_voice),
         pystray.MenuItem("Anotar ahora", lambda: engine.commands.put("toggle")),
+        pystray.MenuItem("Dictado", lambda: engine.commands.put("start_dictation")),
+        pystray.MenuItem("Ayuda y comandos", lambda: ui.put(("help", "Ayuda", "Mirá la pestaña Ayuda de la ventana"))),
         pystray.MenuItem("Claude (Ctrl+Alt+C)", lambda: ui.put(("panel",))),
         pystray.MenuItem("Archivo de notas", open_notes),
         pystray.MenuItem("Salir", quit_app),

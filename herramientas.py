@@ -46,6 +46,31 @@ def desktop_dir():
 
 NOTES_FILE = DATA_DIR / "notas.txt"  # se ven y se editan en la ventana de Asistemis
 TASKS_FILE = DATA_DIR / "tareas.json"
+SETTINGS_FILE = DATA_DIR / "ajustes.json"
+
+
+def load_settings():
+    try:
+        return json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def save_settings(settings):
+    SETTINGS_FILE.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+
+
+def get_theme():
+    """Tema de la UI: 'dark' (por defecto), 'light' o 'system'."""
+    theme = load_settings().get("theme", "dark")
+    return theme if theme in ("dark", "light", "system") else "dark"
+
+
+def set_theme(theme):
+    if theme not in ("dark", "light", "system"):
+        theme = "dark"
+    save_settings({**load_settings(), "theme": theme})
+    return theme
 
 # antes las notas estaban en el escritorio: si siguen ahí, pasan a los datos de Asistemis
 _OLD_NOTES = desktop_dir() / "notas-asistemis.txt"
@@ -195,7 +220,8 @@ BLOCKED = re.compile(r"uninstall|desinstal|registr|regedit|recovery|recuperacion
 # cómo se suelen decir algunas aplicaciones
 ALIASES = {
     "yt music": "YouTube Music", "youtube musica": "YouTube Music", "musica": "YouTube Music",
-    "chrome": "Google Chrome", "google": "Google Chrome", "navegador": "Google Chrome",
+    "chrome": "Google Chrome", "google": "Google Chrome",
+    # "navegador" NO va acá: se resuelve como el navegador predeterminado del sistema
     "vs code": "Visual Studio Code", "vscode": "Visual Studio Code", "vsc": "Visual Studio Code", "visual studio": "Visual Studio Code",
     "code": "Visual Studio Code", "explorador": "Explorador de archivos", "archivos": "Explorador de archivos",
     "riot": "Cliente de Riot", "epic": "Epic Games Launcher", "gog": "GOG GALAXY",
@@ -209,17 +235,145 @@ ALIAS_PATTERNS = [
     (re.compile(r"\b(?:steam|e?st[ie]{1,2}[mn]|stim|spoon)\b"), "Steam"),
 ]
 
+# "abrime el navegador" → el predeterminado del usuario (Chrome, Brave, Opera, Edge, Firefox…)
+BROWSER_KEYS = {"navegador", "browser", "internet", "navegadordedefecto", "defaultbrowser",
+                "elnavegador", "sunavegador", "mi navegador", "lanavegador"}
+
+
+def default_browser_exe():
+    """Ruta del navegador predeterminado de Windows (ProgId de http). Si no, None."""
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice") as k:
+            prog = winreg.QueryValueEx(k, "ProgId")[0]
+        for sub in (r"shell\open\command", r"shell\open\ddeexec"):
+            try:
+                with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, prog + "\\" + sub) as k:
+                    cmd = winreg.QueryValueEx(k, None)[0]
+                if not isinstance(cmd, str):
+                    continue
+                m = re.match(r'"([^"]+)"', cmd) or re.match(r'^\s*([A-Za-z]:\\[^\s"]+)', cmd)
+                if m and Path(m.group(1)).exists():
+                    return m.group(1)
+            except OSError:
+                continue
+    except OSError:
+        pass
+    # fallbacks por si el ProgId no expone un .exe claro
+    for raw in (
+        r"%ProgramFiles%\BraveSoftware\Brave-Browser\Application\brave.exe",
+        r"%ProgramFiles(x86)%\BraveSoftware\Brave-Browser\Application\brave.exe",
+        r"%LocalAppData%\BraveSoftware\Brave-Browser\Application\brave.exe",
+        r"%ProgramFiles%\Mozilla Firefox\firefox.exe",
+        r"%ProgramFiles(x86)%\Mozilla Firefox\firefox.exe",
+        r"%LocalAppData%\Programs\Opera\launcher.exe",
+        r"%ProgramFiles%\Opera\launcher.exe",
+        r"%LocalAppData%\Vivaldi\Application\vivaldi.exe",
+        r"%ProgramFiles%\Google\Chrome\Application\chrome.exe",
+        r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe",
+        r"%LocalAppData%\Google\Chrome\Application\chrome.exe",
+        r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe",
+        r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe",
+    ):
+        p = Path(os.path.expandvars(raw))
+        try:
+            if p.exists():
+                return str(p)
+        except OSError:
+            continue
+    return None
+
+
+def _normalize_query(query):
+    """Limpia la orden sin aplicar aliases todavía (para detectar 'navegador' primero).
+    También saca verbos de apertura: 'abrime el navegador' -> 'el navegador'."""
+    q = fold(query).strip(" .,;:!?¡¿")
+    verbs = re.compile(r"^(?:abr\w*|inici\w*|arranc\w*|lanz\w*|jug\w*|ejecut\w*|corre\w*|abro|abri|abrir)\s+")
+    for _ in range(3):
+        q = FILLER.sub("", q).strip()
+        q = verbs.sub("", q).strip()
+    return q
+
+
+def _apply_aliases(q):
+    q = ALIASES.get(q, q)
+    return next((app for pattern, app in ALIAS_PATTERNS if pattern.search(q)), q)
+
+
+def _is_browser_request(q):
+    qk = _key(q)
+    if not qk:
+        return False
+    if qk in BROWSER_KEYS:
+        return True
+    # "el navegador", "mi navegador", "navegador predeterminado"
+    return qk.endswith("navegador") and len(qk) <= 14
+
 # nombres que se le dan a Whisper como pista para que los escriba bien
 HOTWORDS = "Asistemis, abrime Steam, Antigravity IDE, Figma, Discord, Chrome, YouTube Music, Spotify. Agregá la tarea. Reproducime música."
 
 FILLER = re.compile(r"^(?:el|la|los|las|un|una|mi|me|al|a|por favor|porfa)\s+|\s+(?:por favor|porfa)$")
 
 _apps, _apps_time = [], 0.0
+_app_index = []          # [(nombre, app_id, key, word_keys)] precomputado al cargar
+_app_by_key = {}         # key exacto -> primer (nombre, app_id)
 _refreshing = threading.Lock()
+_steam_cache, _steam_vdf_mtime = None, 0.0
+_mru = []                # app_id abiertos hace poco (más probables)
+_mru_time = {}
+_FIND_CACHE = {}         # (query_key, min_score) -> (app, cuando)
+_FIND_TTL = 45.0
+
+
+def _menu_shortcuts():
+    """Atajos del menú Inicio como (nombre, ruta .lnk). Cubre apps que Get-StartApps no lista
+    (Chrome u otros instalados de forma que no aparecen en el índice del sistema)."""
+    roots = []
+    for var in ("APPDATA", "PROGRAMDATA"):
+        base = os.environ.get(var)
+        if base:
+            roots.append(Path(base) / "Microsoft" / "Windows" / "Start Menu" / "Programs")
+    out = []
+    for root in roots:
+        if not root.exists():
+            continue
+        try:
+            for lnk in root.rglob("*.lnk"):
+                stem = lnk.stem
+                if not stem or BLOCKED.search(fold(stem)):
+                    continue
+                out.append((stem, str(lnk)))
+        except OSError:
+            continue
+    return out
+
+
+def _common_exes():
+    """Ejecutables habituales que a veces no están en el menú Inicio."""
+    hints = [
+        ("Google Chrome", r"%ProgramFiles%\Google\Chrome\Application\chrome.exe"),
+        ("Google Chrome", r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"),
+        ("Google Chrome", r"%LocalAppData%\Google\Chrome\Application\chrome.exe"),
+        ("Mozilla Firefox", r"%ProgramFiles%\Mozilla Firefox\firefox.exe"),
+        ("Mozilla Firefox", r"%ProgramFiles(x86)%\Mozilla Firefox\firefox.exe"),
+        ("Visual Studio Code", r"%LocalAppData%\Programs\Microsoft VS Code\Code.exe"),
+        ("Discord", r"%LocalAppData%\Discord\Update.exe"),
+        ("Spotify", r"%AppData%\Spotify\Spotify.exe"),
+        ("Spotify", r"%LocalAppData%\Microsoft\WindowsApps\Spotify.exe"),
+    ]
+    out = []
+    for name, raw in hints:
+        p = Path(os.path.expandvars(raw))
+        try:
+            if p.exists():
+                out.append((name, str(p)))
+        except OSError:
+            continue
+    return out
 
 
 def _load_apps():
-    global _apps, _apps_time
+    global _apps, _app_index, _app_by_key, _apps_time
     with _refreshing:
         out = subprocess.run(["powershell", "-NoProfile", "-Command",
                               "[Console]::OutputEncoding = [Text.Encoding]::UTF8; "
@@ -229,28 +383,53 @@ def _load_apps():
         apps = [(a["Name"], a["AppID"]) for a in (data if isinstance(data, list) else [data])
                 if not BLOCKED.search(fold(a["Name"]))]
         known = {_key(name) for name, _ in apps}
-        apps += [game for game in steam_games() if _key(game[0]) not in known]  # juegos sin acceso directo
+        extras = steam_games() + _menu_shortcuts() + _common_exes()
+        for name, target in extras:
+            k = _key(name)
+            if k and k not in known and not BLOCKED.search(fold(name)):
+                apps.append((name, target))
+                known.add(k)
         _apps = apps
+        _app_index, _app_by_key = _build_index(apps)
         _apps_time = time.monotonic()
 
 
+def _build_index(apps):
+    """Keys y palabras por app: no se recalculan en cada búsqueda."""
+    index, by_key = [], {}
+    for name, app_id in apps:
+        nk = _key(name)
+        words = [_key(w) for w in name.split() if len(w) > 3]
+        index.append((name, app_id, nk, words))
+        if nk and nk not in by_key:
+            by_key[nk] = (name, app_id)
+    return index, by_key
+
+
 def steam_games():
-    """Juegos instalados en Steam [(nombre, "steam://rungameid/<id>")], aunque no tengan acceso directo."""
+    """Juegos instalados en Steam [(nombre, "steam://rungameid/<id>")].
+    Se cachea: solo se releen los .acf si cambió libraryfolders.vdf."""
+    global _steam_cache, _steam_vdf_mtime
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam") as k:
             steam = Path(winreg.QueryValueEx(k, "SteamPath")[0])
-        vdf = (steam / "steamapps" / "libraryfolders.vdf").read_text(encoding="utf-8", errors="replace")
+        vdf = steam / "steamapps" / "libraryfolders.vdf"
+        mtime = vdf.stat().st_mtime
+        if _steam_cache is not None and mtime == _steam_vdf_mtime:
+            return _steam_cache
+        text = vdf.read_text(encoding="utf-8", errors="replace")
     except OSError:
-        return []
+        return _steam_cache or []
     games = []
-    for library in re.findall(r'"path"\s+"([^"]+)"', vdf):
+    for library in re.findall(r'"path"\s+"([^"]+)"', text):
         folder = Path(library.replace("\\\\", "\\")) / "steamapps"
         for manifest in folder.glob("appmanifest_*.acf"):
-            text = manifest.read_text(encoding="utf-8", errors="replace")
-            name, appid = re.search(r'"name"\s+"([^"]+)"', text), re.search(r'"appid"\s+"(\d+)"', text)
+            raw = manifest.read_text(encoding="utf-8", errors="replace")
+            name, appid = re.search(r'"name"\s+"([^"]+)"', raw), re.search(r'"appid"\s+"(\d+)"', raw)
             if name and appid and not re.search(r"redistributable|proton|steam linux runtime|steamvr",
                                                 name.group(1), re.I):
                 games.append((name.group(1), f"steam://rungameid/{appid.group(1)}"))
+    _steam_cache, _steam_vdf_mtime = games, mtime
     return games
 
 
@@ -268,31 +447,87 @@ def _key(text):
     return re.sub(r"[^a-z0-9]", "", fold(text))
 
 
+def _remember_open(app_id):
+    now = time.monotonic()
+    _mru[:] = [x for x in _mru if x != app_id]
+    _mru.append(app_id)
+    _mru_time[app_id] = now
+    if len(_mru) > 24:
+        old = _mru.pop(0)
+        _mru_time.pop(old, None)
+
+
+def _mru_boost(app_id):
+    """Pequeño bonus a las apps abiertas hace poco (las más probables)."""
+    try:
+        i = _mru.index(app_id)
+    except ValueError:
+        return 0.0
+    return 0.08 * (1.0 - i / max(len(_mru), 1))
+
+
 def find_app(query, min_score=0.75):
-    """Busca la aplicación más parecida a lo dicho ('abrime el chrome' -> Google Chrome)."""
-    q = fold(query).strip(" .,;:!?¡¿")
-    for _ in range(3):
-        q = FILLER.sub("", q).strip()
-    q = ALIASES.get(q, q)
-    q = next((app for pattern, app in ALIAS_PATTERNS if pattern.search(q)), q)
+    """Busca la aplicación más parecida a lo dicho ('abrime el chrome' -> Google Chrome).
+    Orden: navegador predeterminado → alias exacto → key exacto → prefijo → fuzzy → MRU."""
+    global _app_index, _app_by_key
+    q = _normalize_query(query)
     apps = installed_apps()
+    if not _app_index:
+        _app_index, _app_by_key = _build_index(apps)
+    # "abrime el navegador" → el del sistema (Brave, Opera, Edge, Chrome…) — antes de aliases
+    if _is_browser_request(q):
+        exe = default_browser_exe()
+        if exe:
+            return Path(exe).stem, exe
+    q = _apply_aliases(q)
     qk = _key(q)
     if not qk:
         return None
+
+    cache_key = (qk, min_score)
+    hit = _FIND_CACHE.get(cache_key)
+    if hit and time.monotonic() - hit[1] < _FIND_TTL:
+        return hit[0]
+
+    index = _app_index
+    # 1) key exacto (O(1))
+    if qk in _app_by_key:
+        app = _app_by_key[qk]
+        _FIND_CACHE[cache_key] = (app, time.monotonic())
+        return app
+
     best, score = None, 0.0
-    for name, app_id in apps:
-        nk = _key(name)
-        s = SequenceMatcher(None, qk, nk).ratio()
-        if nk == qk:
-            s = 2.0
-        elif nk.startswith(qk) and len(qk) >= 4:
-            s = max(s, 0.9)
-        # también contra cada palabra del nombre: "figma" ~ "Figma", "steam" ~ "Steam"
-        s = max(s, max((SequenceMatcher(None, qk, _key(w)).ratio() for w in name.split() if len(w) > 3),
-                       default=0) - 0.05)
+    # 2) prefijo / contención barata + fuzzy con poda
+    for name, app_id, nk, words in index:
+        if not nk:
+            continue
+        s = 0.0
+        if nk.startswith(qk) and len(qk) >= 4:
+            s = 0.92
+        elif qk.startswith(nk) and len(nk) >= 4:
+            s = 0.85
+        elif len(qk) >= 3 and qk in nk:
+            s = 0.8
+        else:
+            sm = SequenceMatcher(None, qk, nk)
+            # poda: si ni la ratio rápida llega al mínimo, no calculamos la exacta
+            if sm.real_quick_ratio() < min_score - 0.15 and sm.quick_ratio() < min_score - 0.15:
+                continue
+            s = sm.ratio()
+            for wk in words:
+                if len(wk) < 4:
+                    continue
+                ws = SequenceMatcher(None, qk, wk).ratio() - 0.05
+                if ws > s:
+                    s = ws
+        s += _mru_boost(app_id)
         if s > score:
             best, score = (name, app_id), s
-    return best if score >= min_score else None
+    app = best if score >= min_score else None
+    _FIND_CACHE[cache_key] = (app, time.monotonic())
+    if len(_FIND_CACHE) > 200:
+        _FIND_CACHE.clear()
+    return app
 
 
 # --- Ventanas abiertas --------------------------------------------------------
@@ -321,8 +556,16 @@ def _window_exe(hwnd):
         ctypes.windll.kernel32.CloseHandle(handle)
 
 
+def _norm_app_id(app_id):
+    """Get-StartApps a veces devuelve '{GUID}\\Steam\\Steam.exe' (con \\ escapado)."""
+    if not app_id:
+        return ""
+    return str(app_id).replace("\\\\", "\\")
+
+
 def _app_folder(app_id):
     """Carpeta del programa si el AppID es una ruta ('{GUID}\\Steam\\Steam.exe' -> ...\\Steam)."""
+    app_id = _norm_app_id(app_id)
     m = re.match(r"(\{[0-9A-Fa-f-]+\})\\(.+)", app_id)
     if not m and not re.match(r"[A-Za-z]:\\", app_id):
         return None
@@ -338,39 +581,97 @@ def _app_folder(app_id):
         return None
 
 
+def _resolve_app_target(app_id):
+    """Devuelve una ruta de archivo real para abrir, o None si hay que usar AppsFolder."""
+    app_id = _norm_app_id(app_id)
+    if not app_id or "://" in app_id:
+        return None
+    # ruta de disco o UNC
+    if re.match(r"[A-Za-z]:\\", app_id) or app_id.startswith("\\\\"):
+        return app_id if Path(app_id).exists() else None
+    # KnownFolder de Windows: {GUID}\Steam\Steam.exe
+    m = re.match(r"(\{[0-9A-Fa-f-]+\})\\(.+)", app_id)
+    if m:
+        try:
+            import pywintypes
+            from win32com.shell import shell
+            base = Path(shell.SHGetKnownFolderPath(pywintypes.IID(m.group(1))))
+            target = base / m.group(2)
+            return str(target) if target.exists() else None
+        except Exception:
+            return None
+    return None
+
+
+def open_app(query, min_score=0.75):
+    """Si la app ya está abierta, trae su ventana; si no, la abre.
+    Devuelve (nombre, "focused" | "opened"), o None si no hay ninguna parecida."""
+    app = find_app(query, min_score)
+    if not app:
+        return None
+    try:
+        windows = app_windows(app)
+    except Exception:
+        windows = []
+    if windows:
+        _focus(windows[0])
+        _remember_open(app[1])
+        return app[0], "focused"
+    target = _norm_app_id(app[1])
+    if "://" in target:  # juego de Steam (steam://rungameid/...) u otro enlace
+        os.startfile(target)
+    else:
+        resolved = _resolve_app_target(target)
+        if resolved:
+            os.startfile(resolved)
+        else:
+            # AUMID / AppID de Windows (incluye '{GUID}\App\app.exe'): AppsFolder
+            ctypes.windll.shell32.ShellExecuteW(None, "open", f"shell:AppsFolder\\{target}", None, None, 1)
+    _remember_open(app[1])
+    return app[0], "opened"
+
+
 def app_windows(app):
-    """Ventanas abiertas de la app (nombre, AppID), de la más reciente a la más vieja.
-    Se reconoce por su identificador de app, por la carpeta del programa o por el título
-    ("… - Discord"). Una ventana con identificador propio de otra app nunca cuenta: así
-    YouTube Music (que corre dentro de Chrome) no se confunde con Chrome."""
+    """Ventanas abiertas de la app (hwnd), de la más reciente a la más vieja.
+    Primero match barato (título / exe); el COM de AppUserModelID solo si hace falta.
+    Una ventana con identificador propio de otra app nunca cuenta: así YouTube Music
+    (que corre dentro de Chrome) no se confunde con Chrome."""
     import win32con
     import win32gui
     name, app_id = app
     folder = _app_folder(app_id)
     name_key = _key(name)
-    found = []
+    app_id_l = (app_id or "").lower()
+    cheap = []   # hwnds que calzan por título o exe
+    unknown = [] # hwnds que podrían ser UWP / AppUserModelID
 
-    def check(hwnd, _):
+    def collect(hwnd, _):
         if (not win32gui.IsWindowVisible(hwnd) or win32gui.GetWindow(hwnd, win32con.GW_OWNER)
                 or win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE) & win32con.WS_EX_TOOLWINDOW):
             return True
         title = win32gui.GetWindowText(hwnd)
         if not title or title.startswith("Asistemis"):
             return True
-        window_id = _window_app_id(hwnd)
-        if window_id:
-            if window_id.lower() == app_id.lower():
-                found.append(hwnd)
-            elif not folder:
-                return True  # es de otra app
         exe = _window_exe(hwnd).lower()
-        if (folder and exe.startswith(folder + "\\")) or (exe and _key(Path(exe).stem) == name_key) \
-                or title == name or title.endswith(" - " + name):
-            if hwnd not in found:
-                found.append(hwnd)
+        if ((folder and exe.startswith(folder + "\\")) or (exe and _key(Path(exe).stem) == name_key)
+                or title == name or title.endswith(" - " + name)):
+            cheap.append(hwnd)
+        else:
+            unknown.append((hwnd, title, exe))
         return True
 
-    win32gui.EnumWindows(check, None)
+    win32gui.EnumWindows(collect, None)
+    found = list(cheap)
+    # solo si el match barato no alcanzó, consultamos AppUserModelID (COM, más caro)
+    if not found or len(found) < 2:
+        for hwnd, title, exe in unknown:
+            if hwnd in found:
+                continue
+            window_id = _window_app_id(hwnd)
+            if window_id and window_id.lower() == app_id_l:
+                found.append(hwnd)
+            elif not window_id and folder and exe.startswith(folder + "\\"):
+                found.append(hwnd)
     return found
 
 
@@ -395,26 +696,6 @@ def _focus(hwnd):
             user32.AttachThreadInput(me, fg_thread, False)
 
 
-def open_app(query, min_score=0.75):
-    """Si la app ya está abierta, trae su ventana; si no, la abre.
-    Devuelve (nombre, "focused" | "opened"), o None si no hay ninguna parecida."""
-    app = find_app(query, min_score)
-    if not app:
-        return None
-    try:
-        windows = app_windows(app)
-    except Exception:
-        windows = []
-    if windows:
-        _focus(windows[0])
-        return app[0], "focused"
-    if "://" in app[1]:  # juego de Steam (steam://rungameid/...) u otro enlace
-        os.startfile(app[1])
-    else:
-        subprocess.Popen(["explorer.exe", f"shell:AppsFolder\\{app[1]}"], creationflags=NO_WINDOW)
-    return app[0], "opened"
-
-
 def close_app(query):
     """Cierra las ventanas de la app como el botón ✕ (si hay algo sin guardar, la app pregunta).
     Devuelve (nombre, ventanas cerradas), o None si no hay ninguna app parecida."""
@@ -433,7 +714,9 @@ def close_app(query):
 
 MUSIC_APP = "YouTube Music"
 PLAY_NAMES = ("Reproducir", "Play")   # botón de la barra del reproductor (según el idioma de YT Music)
-PAUSE_NAMES = ("Pausar", "Pause")
+PAUSE_NAMES = ("Pausar", "Pause", "Pausa")
+# también botones que solo contienen la palabra (PWA de Brave/Chrome suelen variar)
+_PAUSE_HINTS = ("paus", "pause")
 
 
 def _buttons(window):
@@ -487,7 +770,14 @@ def play_music():
     windows = app_windows(app)
     opened = not windows
     if opened:
-        subprocess.Popen(["explorer.exe", f"shell:AppsFolder\\{app[1]}"], creationflags=NO_WINDOW)
+        target = _norm_app_id(app[1])
+        resolved = _resolve_app_target(target)
+        if resolved:
+            os.startfile(resolved)
+        elif "://" in target:
+            os.startfile(target)
+        else:
+            subprocess.Popen(["explorer.exe", f"shell:AppsFolder\\{target}"], creationflags=NO_WINDOW)
         end = time.monotonic() + 20
         while not windows and time.monotonic() < end:
             time.sleep(0.5)
@@ -498,6 +788,143 @@ def play_music():
     if result == "played":
         return "opened" if opened else "resumed"
     return result or "failed"
+
+
+def _media_key(vk):
+    """Tecla multimedia del teclado (Play/Pause = 0xB3)."""
+    user32 = ctypes.windll.user32
+    user32.keybd_event(vk, 0, 0, 0)
+    user32.keybd_event(vk, 0, 2, 0)  # KEYEVENTF_KEYUP
+
+
+def _find_pause_button(buttons):
+    """Botón de pausa en la barra del reproductor (nombre exacto o que contenga 'paus')."""
+    for name, el in buttons:
+        if name in PAUSE_NAMES:
+            return el
+    for name, el in buttons:
+        nl = (name or "").lower()
+        if any(h in nl for h in _PAUSE_HINTS) and "reproduc" not in nl:
+            # "Pausar", "Pausa la canción", etc.; no "Reproducir"
+            return el
+    return None
+
+
+def _find_play_button(buttons):
+    for name, el in buttons:
+        if name in PLAY_NAMES:
+            return el
+    for name, el in buttons:
+        if name and name.startswith(PLAY_NAMES) and name not in PAUSE_NAMES:
+            if "reproduc" in name.lower() and len(name) <= 20:  # barra del player, no cada track
+                return el
+    return None
+
+
+def pause_music():
+    """Pausa YouTube Music (o lo que esté sonando).
+    1) UI Automation: botón «Pausar» de la barra del reproductor.
+    2) Si no aparece o ya está en pausa, tecla multimedia del sistema.
+    Devuelve "paused", "already_paused", "not_open" o "failed"."""
+    app = find_app(MUSIC_APP)
+    windows = app_windows(app) if app else []
+    import uiautomation as auto
+    ui_result = None
+    if windows:
+        try:
+            with auto.UIAutomationInitializerInThread():
+                window = auto.ControlFromHandle(windows[0])
+                buttons = _buttons(window)
+                pause_el = _find_pause_button(buttons)
+                if pause_el is not None:
+                    auto.Control.CreateControlFromElement(pause_el).GetInvokePattern().Invoke()
+                    time.sleep(0.35)
+                    ui_result = "paused"
+                elif _find_play_button(buttons) is not None:
+                    ui_result = "already_paused"
+        except Exception:
+            ui_result = None
+    if ui_result == "paused":
+        return "paused"
+    if ui_result == "already_paused" and not windows:
+        return "not_open"
+    # fallback / si la app no expone la barra: tecla multimedia del sistema
+    try:
+        _media_key(0xB3)  # VK_MEDIA_PLAY_PAUSE
+        time.sleep(0.35)
+        if ui_result == "already_paused":
+            # UI decía play pero igual mandamos pause: puede estar sonando otra app
+            return "paused"
+        return "paused" if windows else "not_open"
+    except Exception:
+        return ui_result or ("failed" if windows else "not_open")
+
+
+NEXT_NAMES = ("Siguiente", "Next", "Pista siguiente", "Canción siguiente", "Cancion siguiente")
+PREV_NAMES = ("Anterior", "Previous", "Pista anterior", "Canción anterior", "Cancion anterior", "Atrás", "Atras")
+_NEXT_HINTS = ("siguiente", "next")
+_PREV_HINTS = ("anterior", "previous", "atrás", "atras")
+
+
+def _find_player_button(buttons, exact, hints):
+    for name, el in buttons:
+        if name in exact:
+            return el
+    for name, el in buttons:
+        nl = (name or "").lower()
+        if not nl or "reproducir " in nl:  # tracks de la lista, no el player
+            continue
+        if any(h in nl for h in hints) and len(nl) <= 28:
+            return el
+    return None
+
+
+def _media_key(vk):
+    """Tecla multimedia del teclado (Play/Pause = 0xB3, Next = 0xB0, Prev = 0xB1)."""
+    user32 = ctypes.windll.user32
+    user32.keybd_event(vk, 0, 0, 0)
+    user32.keybd_event(vk, 0, 2, 0)  # KEYEVENTF_KEYUP
+
+
+def _player_transport(direction):
+    """Siguiente/anterior pista en YouTube Music.
+    direction: "next" | "prev".
+    1) Botón de la barra vía UI Automation.
+    2) Fallback: tecla multimedia del sistema.
+    Devuelve "ok" o "failed"."""
+    app = find_app(MUSIC_APP)
+    windows = app_windows(app) if app else []
+    import uiautomation as auto
+    exact = NEXT_NAMES if direction == "next" else PREV_NAMES
+    hints = _NEXT_HINTS if direction == "next" else _PREV_HINTS
+    if windows:
+        try:
+            with auto.UIAutomationInitializerInThread():
+                window = auto.ControlFromHandle(windows[0])
+                el = _find_player_button(_buttons(window), exact, hints)
+                if el is not None:
+                    auto.Control.CreateControlFromElement(el).GetInvokePattern().Invoke()
+                    time.sleep(0.3)
+                    return "ok"
+        except Exception:
+            pass
+    vk = 0xB0 if direction == "next" else 0xB1  # VK_MEDIA_NEXT_TRACK / PREV_TRACK
+    try:
+        _media_key(vk)
+        time.sleep(0.25)
+        return "ok" if windows else "failed"
+    except Exception:
+        return "failed"
+
+
+def next_track():
+    """«Siguiente canción» / «siguiente tema»."""
+    return _player_transport("next")
+
+
+def prev_track():
+    """«Canción anterior» / «tema anterior»."""
+    return _player_transport("prev")
 
 
 def web_search(query):

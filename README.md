@@ -160,8 +160,10 @@ El instalador lo hace todo solo:
 - ✔ prepara un entorno de Python propio e instala lo necesario,
 - ✔ si tienes tarjeta NVIDIA, instala lo que hace falta para usarla,
 - ✔ descarga los modelos de voz (~1,6 GB, solo la primera vez),
-- ✔ crea el acceso en el menú Inicio y hace que arranque con Windows,
+- ✔ crea accesos en el **Escritorio**, el menú Inicio y el arranque con Windows,
 - ✔ y abre Asistemis.
+
+> 💡 En el **Escritorio** queda **Asistemis.lnk** (icono junto al reloj). Doble clic para abrirlo; Ctrl+Alt+N lo enciende y apaga. También está en el menú Inicio como **Asistemis**.
 
 **3. ¡Listo!**
 
@@ -217,6 +219,41 @@ Por privacidad, Asistemis **no guarda lo que oye**. Si quieres ajustar la activa
 | Cómo responde Claude | `claude/CLAUDE.md` |
 
 ## ❓ Problemas frecuentes
+
+> 📖 **Guía completa de bloqueos de Windows** (Smart App Control, antivirus, PyAV/ffmpeg):  
+> **[docs/bloqueos-windows.md](docs/bloqueos-windows.md)** — incluye cómo usar Asistemis **sin desactivar el antivirus** (§5).
+
+<details>
+<summary><b>«DLL load failed … Control de aplicaciones bloqueó este archivo»</b></summary>
+
+Windows 11 **Smart App Control** (en español: **Control Inteligente de Aplicaciones**) bloquea los DLL de PyAV/ffmpeg (los usa Whisper). Se ve en el instalador o al abrir Asistemis, sobre todo al descargar los modelos. También salta una notificación de Seguridad de Windows: *«Parte de esta aplicación se ha bloqueado… no podemos confirmar quién publicó avformat-….dll»*.
+
+**Ruta en Windows en español** (no es el antivirus; Defender puede seguir activo):
+
+1. **Win + I** → **Privacidad y seguridad** → **Seguridad de Windows**
+2. **Control de aplicaciones y navegadores**
+3. **Configuración de control de aplicaciones inteligentes**  
+   (puede aparecer como *Smart App Control*)
+4. **Desactivar**
+5. Terminal nueva y verificar:  
+   `.venv\Scripts\python.exe -c "import av; print(av.__version__)"`
+6. Volvé a ejecutar `instalar.cmd` (o abrí Asistemis para que baje los modelos).
+
+Guía completa (registro, antivirus, Sandbox): **[docs/bloqueos-windows.md](docs/bloqueos-windows.md)**.
+
+</details>
+
+<details>
+<summary><b>El instalador dice que no encuentra Python 3.10–3.12</b></summary>
+
+Puede pasar aunque `winget install Python.Python.3.12` ya se haya ejecutado:
+
+1. **El lanzador `py` no ve 3.12 en ese contexto.** En PowerShell 5.1, el script pasaba los argumentos con splatting de string (`@args` con `"-3.12"`); eso enumera caracteres y el instalador fallaba aunque Python estuviera bien. La detección ahora usa array (`@($args)`) y, si hace falta, busca `%LOCALAPPDATA%\Programs\Python\Python312\python.exe`.
+2. **Cerrá y abrí la terminal** después de instalar Python: el PATH se actualiza en una sesión nueva.
+3. Verificá a mano: `py -3.12 --version` o el `python.exe` de la carpeta `Python312`.
+4. Si sigue fallando: `winget install Python.Python.3.12` y volvé a correr `instalar.cmd`.
+
+</details>
 
 <details>
 <summary><b>No me entiende cuando digo «Asistemis»</b></summary>

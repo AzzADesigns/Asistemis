@@ -1,10 +1,11 @@
 ﻿"""Interfaz de Asistemis: ventanas HTML/CSS con cristal de Windows 11 (acrílico).
 
-Cuatro ventanas sin marco, creadas al arrancar y ocultas hasta que hacen falta:
-- toast:  "Asistemis encendido / apagado" (abajo a la derecha, se va sola).
-- mic:    burbuja redonda al costado mientras está encendido, con el uso de la GPU.
-- rec:    lo que se está grabando / transcribiendo / haciendo.
-- claude: conversación con Claude.
+Ventanas sin marco, creadas al arrancar y ocultas hasta que hacen falta:
+- toast:   "Asistemis encendido / apagado" (abajo a la derecha, se va sola).
+- mic:     burbuja redonda al costado mientras está encendido, con el uso de la GPU.
+- rec:     lo que se está grabando / transcribiendo / haciendo.
+- dictate: dictado continuo en vivo (texto creciente, botones Listo/Cancelar).
+- claude:  conversación con Claude.
 
 Las ventanas se muestran y ocultan con llamadas de Windows que no roban el foco
 (así no interrumpen un juego ni lo que estés escribiendo).
@@ -33,7 +34,8 @@ UI_DIR = APP_DIR / "ui"
 user32, dwmapi = ctypes.WinDLL("user32"), ctypes.windll.dwmapi
 
 # tamaños en píxeles CSS (se multiplican por la escala de Windows)
-SIZES = {"toast": (430, 92), "mic": (70, 70), "rec": (470, 210), "claude": (560, 800), "main": (1340, 880)}
+SIZES = {"toast": (430, 92), "mic": (70, 70), "rec": (470, 210), "claude": (560, 800),
+         "main": (1340, 880), "dictate": (520, 360)}
 MARGIN = 16
 TOAST_SECONDS = 2.6
 QUITTING = threading.Event()  # solo con esto activo se dejan cerrar las ventanas
@@ -98,6 +100,26 @@ def page(name):
     if "%ICON%" in html:
         icon = base64.b64encode((APP_DIR / "recursos" / "asistemis.png").read_bytes()).decode()
         html = html.replace("%ICON%", "data:image/png;base64," + icon)
+    # tema global: todas las ventanas escuchan applyTheme (Ajustes → Tema)
+    theme_js = """
+<script>
+function applyTheme(theme) {
+  const pref = theme || "dark";
+  document.documentElement.dataset.themePref = pref;
+  const t = pref === "system"
+    ? (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark")
+    : pref;
+  document.documentElement.dataset.theme = t;
+}
+window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
+  if (document.documentElement.dataset.themePref === "system") applyTheme("system");
+});
+</script>
+"""
+    if "</body>" in html:
+        html = html.replace("</body>", theme_js + "</body>", 1)
+    else:
+        html += theme_js
     return html
 
 
@@ -254,6 +276,7 @@ class Interface:
         self.toast = Glass("toast")
         self.mic = Glass("mic", js_api=MicApi(self), round_=True)
         self.rec = Glass("rec", js_api=RecApi(engine))
+        self.dictate = Glass("dictate", js_api=DictateApi(engine))
         self.chat = chat_api
         self.claude = Glass("claude", js_api=chat_api, focus=True)
         self.main = Glass("main", js_api=MainApi(self, engine, chat_api), focus=True, app=True)
@@ -266,7 +289,7 @@ class Interface:
 
     def start(self):
         """Se llama desde webview.start: coloca las ventanas y atiende la cola."""
-        for g in (self.toast, self.mic, self.rec, self.claude, self.main):
+        for g in (self.toast, self.mic, self.rec, self.dictate, self.claude, self.main):
             g.ready.wait()
         left, top, right, bottom = work_area()
         s = self.toast.scale
@@ -275,6 +298,9 @@ class Interface:
         self.rec.place(right - self.rec.size[0] - m, bottom - self.rec.size[1] - m)
         self.mic.place(right - self.mic.size[0] - round(10 * s), top + (bottom - top) // 2 - self.mic.size[1] // 2)
         self.claude.place(right - self.claude.size[0] - m, top + m)
+        # dictado: centro-derecha, encima del widget de rec para no taparlo
+        self.dictate.place(right - self.dictate.size[0] - m,
+                           bottom - self.dictate.size[1] - m - self.rec.size[1] - round(12 * s))
         self.main.place((left + right - self.main.size[0]) // 2, (top + bottom - self.main.size[1]) // 2)
         threading.Thread(target=self._gpu_loop, daemon=True).start()
         self._loop()
@@ -290,13 +316,15 @@ class Interface:
                 levels.append(args[0])
             elif msg == "quit":
                 QUITTING.set()
-                for g in (self.toast, self.mic, self.rec, self.claude, self.main):
+                for g in (self.toast, self.mic, self.rec, self.dictate, self.claude, self.main):
                     g.win.destroy()
                 return
             elif msg:
                 self._handle(msg, args)
             if levels and (msg is None or len(levels) >= 3):
                 self.rec.js("levels", levels)
+                if self.dictate.visible:
+                    self.dictate.js("levels", levels)
                 levels = []
             self._timers()
 
@@ -333,11 +361,34 @@ class Interface:
             self.main.show(activate=True)
         elif msg == "hide_main":
             self.main.hide()
+        elif msg == "help":
+            self.main.show(activate=True)
+            self.main.js("showView", "help")
+            self._rec("help", args)
+        elif msg == "dictation_started":
+            if self.rec.visible:  # recicló una nota en curso: el foco pasa al dictado
+                self.rec.js("leave")
+                self.rec.hide()
+                self.hide_rec_at = None
+            self.dictate.js("start")
+            self.dictate.show()
+            self.mic.js("state", "rec")
+        elif msg == "dictation_delta":
+            self.dictate.js("appendDictation", args[0] if args else "")
+        elif msg in ("dictation_saved", "dictation_cancelled"):
+            self._hide_dictate()
+            self.mic.js("state", "idle")
+            self._rec(msg, args)
         elif msg == "chat":  # mensajes del chat con Claude: el panel y la pestaña de la ventana principal
             self.claude.js(*args)
             self.main.js(*args)
         else:
             self._rec(msg, args)
+
+    def _hide_dictate(self):
+        self.dictate.js("leave")
+        time.sleep(0.25)
+        self.dictate.hide()
 
     def _rec(self, msg, args):
         """El widget de grabación: escuchando, transcribiendo y el resultado."""
@@ -345,6 +396,8 @@ class Interface:
             "listening": ("rec", "Escuchando", "Di «eso es todo» para terminar", None),
             "transcribing": ("busy", "Transcribiendo…", "", None),
             "saved": ("ok", "Anotado", args[0] if args else "", 4.0),
+            "dictation_saved": ("ok", "Dictado guardado", "Nota con tag [dictado]", 3.5),
+            "dictation_cancelled": ("muted", "Dictado cancelado", "No se guardó nada", 2.0),
             "opened": ("ok", f"Abriendo {args[0]}" if args else "Abriendo", "", 2.5),
             "focused": ("ok", f"{args[0]} ya estaba abierto" if args else "", "Te lo traje al frente", 2.5),
             "closed": ("ok", f"Cerrando {args[0]}" if args else "Cerrando", "", 2.5),
@@ -359,7 +412,17 @@ class Interface:
                       "playing": ("ok", "Ya está sonando", "YouTube Music", 2.5),
                       "missing": ("muted", "No encontré YouTube Music", "¿Está instalada como app?", 3.5),
                       }.get(args[0] if args else "", ("error", "No pude darle play", "YouTube Music no respondió", 4.0)),
+            "music_stop": {"paused": ("ok", "Música pausada", "YouTube Music", 3.0),
+                           "already_paused": ("muted", "Ya estaba en pausa", "YouTube Music", 2.5),
+                           "not_open": ("muted", "YouTube Music no está abierta", "No había nada que pausar", 3.0),
+                           }.get(args[0] if args else "", ("error", "No pude pausar la música", "Probá «pausá» o la tecla del teclado", 4.0)),
+            "music_next": {"ok": ("ok", "Siguiente canción", "YouTube Music", 2.5)
+                           }.get(args[0] if args else "", ("error", "No pude pasar a la siguiente", "¿Está abierta YouTube Music?", 3.5)),
+            "music_prev": {"ok": ("ok", "Canción anterior", "YouTube Music", 2.5)
+                           }.get(args[0] if args else "", ("error", "No pude volver a la anterior", "¿Está abierta YouTube Music?", 3.5)),
             "order": ("claude", "Enviado a Claude", args[0] if args else "", 2.5),
+            "help": ("ok", args[0] if args else "Ayuda", args[1] if len(args) > 1 else "Mirá la pestaña Ayuda", 9.0),
+            "dictation_tip": ("rec", "Dictado activo", "Hablá… Cortar: «eso es todo» · «detené» · Listo", 7.0),
             "nothing": ("muted", "No entendí nada", "No se guardó nada", 3.0),
             "cancelled": ("muted", "Cancelado", "", 1.2),
             "error": ("error", "Error", args[0] if args else "", 8.0),
@@ -390,7 +453,7 @@ class Interface:
 
 
 class MainApi:
-    """Lo que puede pedir la ventana principal (notas, encendido y Claude)."""
+    """Lo que puede pedir la ventana principal (notas, encendido, Claude y ajustes)."""
 
     def __init__(self, iface, engine, chat):
         self._iface, self._engine, self._chat = iface, engine, chat
@@ -421,7 +484,7 @@ class MainApi:
         herramientas.move_task(int(task_id), status)
 
     def delete_task(self, task_id):
-        herramientas.delete_task(int(task_id))
+        herramientas.delete_task(task_id)
 
     def search(self, text):
         herramientas.web_search(text)
@@ -435,6 +498,12 @@ class MainApi:
 
     def power_state(self):
         return bool(self._engine.wake_by_voice)
+
+    def theme(self):
+        return herramientas.get_theme()
+
+    def set_theme(self, theme):
+        return herramientas.set_theme(theme)
 
     def claude_send(self, text):
         self._chat.submit(text, "escrita")
@@ -478,3 +547,16 @@ class RecApi:
 
     def cancel(self):
         self._engine.commands.put("cancel")
+
+
+class DictateApi:
+    """Botones de la ventana de dictado en vivo."""
+
+    def __init__(self, engine):
+        self._engine = engine
+
+    def finish(self):
+        self._engine.commands.put("stop_dictation")
+
+    def cancel(self):
+        self._engine.commands.put("cancel_dictation")
