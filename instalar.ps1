@@ -109,7 +109,7 @@ if ($avCode -ne 0) {
 # 3. Modelos de voz (Whisper)
 if (-not $SinDescargarModelos) {
     Paso 'Descargando los modelos de voz (~1,6 GB, solo la primera vez)'
-    $modelos = if ($gpu) { "'large-v3-turbo'" } else { "'large-v3-turbo', 'base'" }
+    $modelos = if ($gpu) { "'large-v3-turbo', 'base'" } else { "'large-v3-turbo', 'base'" }
     $cache = (Join-Path $env:LOCALAPPDATA 'Asistemis\models\whisper').Replace('\', '/')
     & $py -c "from faster_whisper import download_model; [download_model(m, cache_dir='$cache') for m in ($modelos,)]"
     if ($LASTEXITCODE -ne 0) {

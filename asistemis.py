@@ -57,6 +57,8 @@ HOTKEY = "N"               # Ctrl+Alt+N: enciende / apaga Asistemis (asígnalo a
 PANEL_HOTKEY = "C"         # Ctrl+Alt+C: panel de Claude
 WHISPER_MODEL = "large-v3-turbo"  # transcribe la nota (small se equivoca mucho con el micro del JBL)
 LISTEN_MODEL = "base"      # sin tarjeta gráfica: más rápido, para escuchar continuamente
+GPU_ECO_IDLE = 45          # s sin usar la GPU en modo eco antes de descargarla
+GPU_MODES = ("auto", "eco", "cpu")  # ajustes.json → "gpu_mode"
 LOG_HEARD = False          # se lee de ajustes.json ("registrar_lo_oido"): guarda en el log lo que oye
                            # y el audio de la última nota; útil para ajustar la activación, no por privacidad
 
@@ -557,7 +559,11 @@ class Engine(threading.Thread):
         self.heard = []                    # lo que oye mientras graba
         self.opening = False               # la escucha ya oyó una orden ("abrime chrome")
         self.gpu = False
+        self.gpu_mode = load_settings().get("gpu_mode", "auto")  # auto | eco | cpu
+        if self.gpu_mode not in GPU_MODES:
+            self.gpu_mode = "auto"
         self.check_every = CHECK_EVERY
+        self.gpu_idle_at = None  # momento en que se puede descargar la GPU (modo eco)
         self.probing = threading.Event()   # hay una transcripción de pausa en curso
         self.probed_at = None              # momento de voz que ya se transcribió en una pausa
         self.probe_offset = 0              # samples de chunks ya transcritos en sondas anteriores (T1)
@@ -594,6 +600,7 @@ class Engine(threading.Thread):
         try:  # sin "with": entrar en el bloque encendería el micrófono
             while self._handle_commands():
                 self._maybe_unload()
+                self._release_gpu_eco()
                 try:
                     block = self._to_16k(self.audio.get(timeout=0.2))
                 except queue.Empty:
@@ -672,6 +679,11 @@ class Engine(threading.Thread):
         contexto al inicio para no cortar palabras en el borde."""
         if self.probing.is_set() or not (self.gpu or self.opening):
             return
+        # en eco la sonda es más barata (beam 3) y puede faltar el turbo en la GPU
+        beam = 3 if self.gpu_mode == "eco" else 5
+        if self.gpu_mode == "eco" and (self.whisper is None or not self.gpu_loaded):
+            self._ensure_gpu()
+            return  # el turbo se está subiendo; la próxima pausa ya sondea
         self.probed_at = self.last_voice
         self.probing.set()
         start_sample = max(0, self.probe_offset - SR)  # 1 s de solape al inicio
@@ -689,15 +701,16 @@ class Engine(threading.Thread):
             return
         audio = np.concatenate(self.chunks[start_idx:]).astype(np.float32) / 32768
         total_samples = sum(len(b) for b in self.chunks)  # foto al empezar la sonda
-        threading.Thread(target=self._probe_run, args=(audio, self.generation, self.last_voice, total_samples),
+        threading.Thread(target=self._probe_run,
+                         args=(audio, self.generation, self.last_voice, total_samples, beam),
                          daemon=True).start()
 
-    def _probe_run(self, audio, generation, voice_at, new_offset):
+    def _probe_run(self, audio, generation, voice_at, new_offset, beam=5):
         try:
             self.whisper_ready.wait()
             if self.whisper is None:
                 raise RuntimeError("no se pudo cargar Whisper")
-            segments, _ = self.whisper.transcribe(audio, language="es", beam_size=5, vad_filter=True, hotwords=HOTWORDS,
+            segments, _ = self.whisper.transcribe(audio, language="es", beam_size=beam, vad_filter=True, hotwords=HOTWORDS,
                                                   without_timestamps=True)
             text = "".join(s.text for s in segments).strip()
             if LOG_HEARD:
@@ -707,6 +720,7 @@ class Engine(threading.Thread):
             log.exception("error al transcribir la pausa")
         finally:
             self.probing.clear()
+            self._mark_gpu_busy()
 
     def _open_stream(self):
         def callback(indata, frames, time_info, status):
@@ -1142,19 +1156,38 @@ class Engine(threading.Thread):
         self.ui.put(("mode", on))
 
     def _ensure_gpu(self):
-        """Devuelve el modelo a la tarjeta gráfica (~0,7 s, mientras se empieza a hablar)."""
+        """Devuelve el modelo a la tarjeta gráfica (~0,7 s, mientras se empieza a hablar).
+        En modo eco solo carga turbo si todavía no está (se descarga a los 45 s de quietud)."""
+        if self.gpu_mode == "cpu" or not self.gpu:
+            return
+        self._mark_gpu_busy()
+        if self.gpu_mode == "eco" and (self.whisper is None or not self.gpu_loaded):
+            self.gpu_loaded = True
+            self.whisper_ready.clear()
+            threading.Thread(target=self._gpu_load, daemon=True).start()
+            return
         if self.gpu and not self.gpu_loaded:
             self.gpu_loaded = True
             threading.Thread(target=self._gpu_load, daemon=True).start()
 
     def _gpu_load(self):
         try:
-            self.whisper.model.load_model()
-            log.info("modelo de vuelta en la GPU")
+            from faster_whisper import WhisperModel
+            if self.whisper is None:
+                # modo eco: recién ahora se crea el turbo en la GPU
+                self.whisper = WhisperModel(WHISPER_MODEL, device="cuda", compute_type="float16",
+                                            download_root=str(WHISPER_DIR), local_files_only=downloaded(WHISPER_MODEL))
+                self.whisper.transcribe(np.zeros(SR, np.float32), language="es")
+                log.info("turbo en la GPU (modo eco)")
+            else:
+                self.whisper.model.load_model()
+                log.info("modelo de vuelta en la GPU")
         except Exception:
             log.exception("no se pudo volver a cargar el modelo")
+            self.gpu_loaded = False
         finally:
             self.whisper_ready.set()
+            self._mark_gpu_busy()
 
     def _maybe_unload(self):
         """Apagado, libera la memoria de los modelos en cuanto nada está usando uno.
@@ -1178,15 +1211,20 @@ class Engine(threading.Thread):
             log.info("modelos descargados de la RAM")
 
     def _load_models(self):
-        """Con tarjeta NVIDIA, un solo modelo "turbo" en la GPU escucha y transcribe (~0,3 s).
-        Sin ella, "base" escucha en la CPU y "turbo" se carga aparte para las notas (~7 s)."""
+        """Carga Whisper según ajustes.json → "gpu_mode":
+        - auto: turbo float16 en la GPU para escuchar y transcribir (rápido, más VRAM).
+        - eco:  wake en CPU (base); el turbo solo se sube a la GPU al dictar/nota y se
+                descarga a los GPU_ECO_IDLE s de inactividad (menos consumo continuo).
+        - cpu:  nunca toca la GPU (como no tener tarjeta NVIDIA)."""
         nvidia = APP_DIR / "nvidia" if FROZEN else Path(sys.prefix) / "Lib" / "site-packages" / "nvidia"
         for d in glob.glob(str(nvidia / "*" / "bin")):
             os.add_dll_directory(d)  # cuBLAS / cuDNN instalados con pip
             os.environ["PATH"] = d + os.pathsep + os.environ["PATH"]
         import ctranslate2
         from faster_whisper import WhisperModel
-        if ctranslate2.get_cuda_device_count() > 0:
+        mode = self.gpu_mode
+        cuda = ctranslate2.get_cuda_device_count() > 0 and mode != "cpu"
+        if cuda and mode == "auto":
             try:
                 model = WhisperModel(WHISPER_MODEL, device="cuda", compute_type="float16",
                                      download_root=str(WHISPER_DIR), local_files_only=downloaded(WHISPER_MODEL))
@@ -1194,12 +1232,28 @@ class Engine(threading.Thread):
                 self.listener = self.whisper = model
                 self.gpu, self.check_every, self.gpu_loaded = True, CHECK_EVERY_GPU, True
                 self.whisper_ready.set()
-                log.info("whisper cargado en la GPU")
+                log.info("whisper cargado en la GPU (modo auto)")
                 return
             except Exception:
                 log.exception("no se pudo usar la GPU; sigo con la CPU")
+        if cuda and mode == "eco":
+            # wake barato en CPU; turbo se sube a la GPU solo cuando hace falta
+            try:
+                self.listener = WhisperModel(LISTEN_MODEL, device="cpu", compute_type="int8",
+                                             download_root=str(WHISPER_DIR), local_files_only=downloaded(LISTEN_MODEL))
+                self.gpu, self.gpu_loaded = True, False
+                self.check_every = CHECK_EVERY  # el wake es en CPU: cada 1 s alcanza
+                self.whisper = None
+                self.whisper_ready.set()  # el listener ya está listo; turbo se carga after
+                self.gpu_idle_at = None
+                log.info("modo eco: wake en CPU; GPU solo al dictar o anotar")
+                return
+            except Exception:
+                log.exception("no se pudo cargar el listener en CPU; sigo igual")
         self.listener = WhisperModel(LISTEN_MODEL, device="cpu", compute_type="int8",
                                      download_root=str(WHISPER_DIR), local_files_only=downloaded(LISTEN_MODEL))
+        self.gpu = False
+        self.check_every = CHECK_EVERY
         threading.Thread(target=self._load_whisper, args=(WhisperModel,), daemon=True).start()
 
     def _load_whisper(self, WhisperModel):
@@ -1212,6 +1266,65 @@ class Engine(threading.Thread):
         finally:
             self.whisper_ready.set()
 
+    def set_gpu_mode(self, mode):
+        """Cambia auto/eco/cpu. Guarda y recarga los modelos si el modo difiere."""
+        if mode not in GPU_MODES:
+            mode = "auto"
+        self.gpu_mode = mode
+        save_settings({**load_settings(), "gpu_mode": mode})
+        log.info("gpu_mode = %s", mode)
+        if self.state == self.IDLE and not self.checking.is_set() and not self.probing.is_set():
+            self.whisper_ready.clear()
+            if self.gpu and self.gpu_loaded:
+                try:
+                    self.whisper.model.unload_model(to_cpu=True)
+                except Exception:
+                    pass
+                self.gpu_loaded = False
+            self.whisper = None
+            self.listener = None
+            threading.Thread(target=self._load_models, daemon=True).start()
+
+    def _release_gpu_eco(self):
+        """Modo eco: descarga el turbo de la GPU si lleva GPU_ECO_IDLE s sin usarse."""
+        if self.gpu_mode != "eco" or not self.gpu_loaded:
+            return
+        if self.state != self.IDLE or self.dictating or self.checking.is_set() or self.probing.is_set():
+            self.gpu_idle_at = None
+            return
+        if self.gpu_idle_at is None:
+            self.gpu_idle_at = time.monotonic() + GPU_ECO_IDLE
+            return
+        if time.monotonic() < self.gpu_idle_at:
+            return
+        try:
+            self.whisper_ready.clear()
+            if self.whisper is not None:
+                self.whisper.model.unload_model(to_cpu=True)
+                # en eco el turbo no hace falta en RAM: se recarga a demanda en la GPU
+                self.whisper = None
+            self.gpu_loaded = False
+            self.gpu_idle_at = None
+            log.info("modo eco: turbo fuera de la GPU (ahorro de VRAM)")
+        except Exception:
+            log.exception("no se pudo liberar la GPU (eco)")
+        finally:
+            self.whisper_ready.set()  # el wake sigue en CPU con listener
+
+    def _mark_gpu_busy(self):
+        if self.gpu_mode == "eco":
+            self.gpu_idle_at = None
+
+    def _wait_whisper(self, timeout=90):
+        """En modo eco el turbo puede estar cargando en la GPU. Espera a que exista."""
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            if self.whisper is not None:
+                if self.gpu_mode != "eco" or self.gpu_loaded or not self.gpu:
+                    return True
+            time.sleep(0.4)
+        return self.whisper is not None
+
     def _transcribe(self, audio):
         if LOG_HEARD:
             with wave.open(str(DATA_DIR / "ultima-nota.wav"), "wb") as f:
@@ -1220,10 +1333,14 @@ class Engine(threading.Thread):
                 f.setframerate(SR)
                 f.writeframes((audio * 32768).astype(np.int16).tobytes())
         try:
-            self.whisper_ready.wait()
+            if self.gpu_mode == "eco" and (self.whisper is None or not self.gpu_loaded):
+                self._ensure_gpu()
+            if not self._wait_whisper():
+                raise RuntimeError("no se pudo cargar Whisper")
             if self.whisper is None:
                 raise RuntimeError("no se pudo cargar Whisper")
-            segments, _ = self.whisper.transcribe(audio, language="es", beam_size=5, vad_filter=True, hotwords=HOTWORDS,
+            beam = 3 if self.gpu_mode == "eco" else 5
+            segments, _ = self.whisper.transcribe(audio, language="es", beam_size=beam, vad_filter=True, hotwords=HOTWORDS,
                                                   without_timestamps=True)
             text = "".join(s.text for s in segments).strip()
             if LOG_HEARD:

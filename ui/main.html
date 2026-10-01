@@ -327,7 +327,7 @@ textarea::placeholder, .add input::placeholder { color: var(--faint); }
 </div>
 
 <div class="modal" id="settings" hidden>
-  <div class="modal-card">
+    <div class="modal-card">
     <h2>Ajustes</h2>
     <p class="sub">Tema de la aplicación. Se recuerda para la próxima vez.</p>
     <div class="theme-row" id="themeRow">
@@ -335,6 +335,17 @@ textarea::placeholder, .add input::placeholder { color: var(--faint); }
       <button class="theme-opt" data-theme="light" type="button"><span class="sw"></span>Claro</button>
       <button class="theme-opt" data-theme="system" type="button"><span class="sw"></span>Sistema</button>
     </div>
+    <p class="sub" style="margin-bottom:8px;">GPU / consumo</p>
+    <div class="theme-row" id="gpuRow">
+      <button class="theme-opt" data-gpu="auto" type="button"><span class="sw"></span>Automático</button>
+      <button class="theme-opt" data-gpu="eco" type="button"><span class="sw"></span>Económico</button>
+      <button class="theme-opt" data-gpu="cpu" type="button"><span class="sw"></span>Solo CPU</button>
+    </div>
+    <p class="sub" style="margin:0 0 14px; font-size:14px;">
+      <b>Automático:</b> GPU siempre lista (más rápido).<br>
+      <b>Económico:</b> la GPU solo se usa al dictar/anotar y se libera sola.<br>
+      <b>Solo CPU:</b> no toca la tarjeta gráfica (más lento, menos VRAM).
+    </p>
     <div class="modal-actions">
       <button class="btn primary" type="button" onclick="closeSettings()">Listo</button>
     </div>
@@ -369,19 +380,28 @@ $("power").onclick = () => api().power();
 async function openSettings() {
   $("settings").hidden = false;
   markTheme(await api().theme());
+  markGpu(await api().gpu_mode());
 }
 function closeSettings() { $("settings").hidden = true; }
 function markTheme(theme) {
-  document.querySelectorAll(".theme-opt").forEach(b => b.classList.toggle("on", b.dataset.theme === theme));
+  document.querySelectorAll("#themeRow .theme-opt").forEach(b => b.classList.toggle("on", b.dataset.theme === theme));
+}
+function markGpu(mode) {
+  document.querySelectorAll("#gpuRow .theme-opt").forEach(b => b.classList.toggle("on", b.dataset.gpu === mode));
 }
 async function chooseTheme(theme) {
   const saved = await api().set_theme(theme);
   applyTheme(saved);
   markTheme(saved);
 }
+async function chooseGpu(mode) {
+  const saved = await api().set_gpu_mode(mode);
+  markGpu(saved);
+}
 $("gear").onclick = openSettings;
 $("settings").addEventListener("click", e => { if (e.target === $("settings")) closeSettings(); });
-document.querySelectorAll(".theme-opt").forEach(b => { b.onclick = () => chooseTheme(b.dataset.theme); });
+document.querySelectorAll("#themeRow .theme-opt").forEach(b => { b.onclick = () => chooseTheme(b.dataset.theme); });
+document.querySelectorAll("#gpuRow .theme-opt").forEach(b => { b.onclick = () => chooseGpu(b.dataset.gpu); });
 
 /* ---------- notas ---------- */
 let notes = [], notesVersion = null, showActivity = true;
