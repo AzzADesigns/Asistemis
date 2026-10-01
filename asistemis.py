@@ -511,7 +511,7 @@ def downloaded(model):
 
 def load_settings():
     try:
-        return json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+        return json.loads(SETTINGS_FILE.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
         return {}
 
