@@ -505,6 +505,13 @@ class MainApi:
     def set_theme(self, theme):
         return herramientas.set_theme(theme)
 
+    def gpu_mode(self):
+        return getattr(self._engine, "gpu_mode", "auto")
+
+    def set_gpu_mode(self, mode):
+        self._engine.set_gpu_mode(mode)
+        return self._engine.gpu_mode
+
     def claude_send(self, text):
         self._chat.submit(text, "escrita")
 
