@@ -62,9 +62,22 @@ El instalador crea un acceso directo en la carpeta de Inicio de Windows, pero no
 ## Progreso
 
 - Rama: `feature/arranque-automatico` (desde `main`)
-- Estado: completado (verificación de sintaxis + estructural; sin ejecutar la app ni crear/borrar accesos de Inicio en esta sesión)
+- Estado: completado y probado en backend (ciclo activar/desactivar verificado tras fix `ad4e1fb`); UI probable por inspección + llamadas de API expuestas. La PC del usuario quedó con arranque desactivado.
 - Nota de diseño: en esta rama el modal Ajustes solo tiene la fila de tema (no hay fila GPU ni `gpu_mode()` en `MainApi`, tampoco en `main`); la sección de arranque se colocó después de la fila de tema y el marcado en `openSettings` después de `markTheme`. Los selectores de tema se acotaron a `#themeRow .theme-opt` para que los botones nuevos de `#autostartRow` (misma clase `theme-opt`) no se vean afectados por `markTheme` ni por el clic de tema; el comportamiento visible del tema no cambia.
 - Commits:
   - `a6cded8` feat(ajustes): opcion para activar o desactivar el arranque con Windows — herramientas.py, interfaz.py, ui/main.html
   - `48501dd` docs: documentar el ajuste de arranque con Windows en el README — README.md
   - `4329cb2` docs: registrar avance de la tarea arranque-automatico — este documento (Progreso)
+  - `86d2c49` docs: registrar hashes de los work units en el documento de la tarea
+  - `ad4e1fb` fix(ajustes): crear el acceso de arranque con -EncodedCommand — herramientas.py
+- Prueba funcional (pedido del usuario "necesito probarlo"):
+  - **Fallo encontrado**: `set_autostart(True)` devolvía False y no creaba el `.lnk`.
+  - **Causa raíz**: `powershell -Command` concatena los tokens finales al texto del comando; `$args` dentro del scriptblock queda vacío y `CreateShortcut($lnk)` recibe `$null` (error: "el nombre debe terminar en .lnk"). El patrón `$args[0..4]` jamás funcionó — solo estaba verificado por sintaxis.
+  - **Fix** (`ad4e1fb`): valores embebidos entre comillas simples (`'` → `''`) + `-EncodedCommand` (UTF-16LE base64). Sin `$args`, sin problemas de comillas ni de acentos.
+  - **Ciclo verificado tras el fix** (venv python, vía API): `enabled_before=False` → `set_autostart(True)=True` → `.lnk` creado con Target=`Asistemis.exe` instalado, Args=`--segundo-plano`, WorkDir e Icon correctos → `set_autostart(False)=False` → `.lnk` borrado. La PC quedó en DESACTIVADO, como pidió el usuario.
+  - `py_compile herramientas.py` → exit 0.
+- Acción del sistema (pedido del usuario, ejecutada por el orquestador): borrado `Startup\Asistemis.lnk` en esta PC → arranque con Windows DESACTIVADO en esta máquina.
+- Verificación del orquestador: `py_compile herramientas.py interfaz.py` → exit 0; `git diff main` solo en superficies permitidas; spot-check del diff conforme al diseño.
+- Review RDD: assess `--base-ref main --committed-only` → riesgo **high** (`process_boundary` / `shell_process` en `herramientas.py`, 5 archivos, 165 líneas). Preflight STATUS → `fresh_target_ready`. START devolvió `gentle-ai.review-integration.consent/v3` (consentimiento del candidato). Esta sesión de runtime no expone la UI nativa `question` requerida para presentar ese sobre; según el contrato no hay fallback por chat para consent/v3 → se detuvo SIN invocar `review start --consent granted/declined`. **Review pendiente: sin autoridad ni recibo.** La entrega sigue la política ordinaria del repo.
+- Espejo Engram (`odd/arranque-automatico/tasks`): **pendiente** — `mem_save` no está disponible en esta sesión; este archivo es la fuente de verdad local.
+- Riesgo futuro al mergear `feature/modos-gpu`: ese trae fila GPU y selectores sin acotar en el modal; resolver el conflicto de `ui/main.html` acotando `#gpuRow` igual que `#themeRow`/`#autostartRow`.
