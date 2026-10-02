@@ -62,6 +62,7 @@ El instalador crea un acceso directo en la carpeta de Inicio de Windows, pero no
 ## Progreso
 
 - Rama: `feature/arranque-automatico` (desde `main`)
+- **PR abierto: https://github.com/AzzADesigns/Asistemis/pull/3** (desde `Shinigamy19:feature/arranque-automatico` hacia `AzzADesigns:main`)
 - Estado: completado y probado en backend (ciclo activar/desactivar verificado tras fix `ad4e1fb`); UI probable por inspección + llamadas de API expuestas. La PC del usuario quedó con arranque desactivado.
 - Nota de diseño: en esta rama el modal Ajustes solo tiene la fila de tema (no hay fila GPU ni `gpu_mode()` en `MainApi`, tampoco en `main`); la sección de arranque se colocó después de la fila de tema y el marcado en `openSettings` después de `markTheme`. Los selectores de tema se acotaron a `#themeRow .theme-opt` para que los botones nuevos de `#autostartRow` (misma clase `theme-opt`) no se vean afectados por `markTheme` ni por el clic de tema; el comportamiento visible del tema no cambia.
 - Commits:
