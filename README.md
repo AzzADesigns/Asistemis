@@ -185,6 +185,8 @@ Desde PowerShell, dentro de la carpeta de Asistemis:
 
 </details>
 
+> 💡 También puedes activar o desactivar el arranque con Windows en cualquier momento desde **Ajustes → Arranque con Windows**.
+
 ### 🤖 Activar Claude (opcional)
 
 1. Instala [Claude Code](https://claude.com/claude-code).
