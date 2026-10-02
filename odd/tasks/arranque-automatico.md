@@ -67,4 +67,4 @@ El instalador crea un acceso directo en la carpeta de Inicio de Windows, pero no
 - Commits:
   - `a6cded8` feat(ajustes): opcion para activar o desactivar el arranque con Windows — herramientas.py, interfaz.py, ui/main.html
   - `48501dd` docs: documentar el ajuste de arranque con Windows en el README — README.md
-  - `docs: registrar avance de la tarea arranque-automatico` — este documento (Progreso)
+  - `4329cb2` docs: registrar avance de la tarea arranque-automatico — este documento (Progreso)
