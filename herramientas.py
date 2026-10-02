@@ -9,6 +9,7 @@ Solo abre aplicaciones instaladas (las de Get-StartApps) y nunca desinstaladores
 ni herramientas del sistema, así que no sirve para ejecutar comandos arbitrarios.
 """
 
+import base64
 import ctypes
 import json
 import os
@@ -124,19 +125,23 @@ def set_autostart(on):
             pass
         return False
     target, arguments, workdir, icon_location = _autostart_command()
-    # Los valores viajan como argumentos separados ($args[0..4]), sin interpolar rutas
-    # dentro del script: así no hay problemas de comillas con espacios en las rutas.
-    script = ("& { $lnk, $target, $arguments, $workdir, $icon = $args[0..4];"
-              "$w = New-Object -ComObject WScript.Shell;"
-              "$s = $w.CreateShortcut($lnk);"
-              "$s.TargetPath = $target;"
-              "$s.Arguments = $arguments;"
-              "$s.WorkingDirectory = $workdir;"
-              "$s.IconLocation = $icon;"
-              "$s.Description = 'Asistemis: notas y órdenes por voz';"
-              "$s.Save() }")
-    subprocess.run(["powershell", "-NoProfile", "-Command", script,
-                    str(lnk), target, arguments, workdir, icon_location],
+    # powershell -Command trae los tokens finales al texto del comando (no a $args):
+    # los valores viajan embebidos entre comillas simples (' -> '') y el script se
+    # pasa con -EncodedCommand (UTF-16LE base64), así no hay problemas de comillas
+    # con espacios ni de acentos en Description.
+    def q(value):
+        return "'" + str(value).replace("'", "''") + "'"
+    script = (f"$lnk={q(lnk)};"
+              "$w=New-Object -ComObject WScript.Shell;"
+              "$s=$w.CreateShortcut($lnk);"
+              f"$s.TargetPath={q(target)};"
+              f"$s.Arguments={q(arguments)};"
+              f"$s.WorkingDirectory={q(workdir)};"
+              f"$s.IconLocation={q(icon_location)};"
+              f"$s.Description={q('Asistemis: notas y órdenes por voz')};"
+              "$s.Save()")
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    subprocess.run(["powershell", "-NoProfile", "-EncodedCommand", encoded],
                    capture_output=True, creationflags=NO_WINDOW)
     return lnk.exists()
 
