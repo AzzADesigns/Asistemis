@@ -505,6 +505,12 @@ class MainApi:
     def set_theme(self, theme):
         return herramientas.set_theme(theme)
 
+    def autostart(self):
+        return herramientas.autostart_enabled()
+
+    def set_autostart(self, on):
+        return herramientas.set_autostart(bool(on))
+
     def claude_send(self, text):
         self._chat.submit(text, "escrita")
 

@@ -9,6 +9,7 @@ Solo abre aplicaciones instaladas (las de Get-StartApps) y nunca desinstaladores
 ni herramientas del sistema, así que no sirve para ejecutar comandos arbitrarios.
 """
 
+import base64
 import ctypes
 import json
 import os
@@ -71,6 +72,78 @@ def set_theme(theme):
         theme = "dark"
     save_settings({**load_settings(), "theme": theme})
     return theme
+
+
+# --- Arranque con Windows -----------------------------------------------------
+# La única fuente de verdad es la existencia del acceso directo en la carpeta de
+# Inicio (misma carpeta que usa instalar.ps1 / compilar.ps1); no hay flag en ajustes.json.
+
+
+def startup_dir():
+    """Carpeta de Inicio de Windows (Startup) del usuario actual."""
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders") as key:
+            return Path(os.path.expandvars(winreg.QueryValueEx(key, "Startup")[0]))
+    except OSError:
+        return Path.home() / "AppData" / "Roaming" / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+
+
+def autostart_shortcut():
+    """Ruta del acceso directo de arranque de Asistemis."""
+    return startup_dir() / "Asistemis.lnk"
+
+
+def autostart_enabled():
+    """True si Asistemis arranca con Windows (existe el acceso directo de Inicio)."""
+    return autostart_shortcut().exists()
+
+
+def _autostart_command():
+    """(target, arguments, workdir, icon_location) del acceso directo de arranque.
+    Prefiere el .exe instalado; si no existe, pythonw + asistemis.py (mismo criterio que instalar.ps1)."""
+    exe = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "Programs" / "Asistemis" / "Asistemis.exe"
+    if exe.exists():
+        return str(exe), "--segundo-plano", str(exe.parent), f"{exe},0"
+    pythonw = APP_DIR / ".venv" / "Scripts" / "pythonw.exe"
+    if not pythonw.exists():
+        pythonw = Path(sys.executable).parent / "pythonw.exe"
+    script = APP_DIR / "asistemis.py"
+    icon = APP_DIR / "recursos" / "asistemis.ico"
+    icon_location = f"{icon},0" if icon.exists() else f"{pythonw},0"
+    return str(pythonw), f'"{script}" --segundo-plano', str(APP_DIR), icon_location
+
+
+def set_autostart(on):
+    """Activa o desactiva el arranque con Windows creando/borrando el acceso directo de Inicio.
+    Devuelve el estado resultante (True si el acceso directo existe)."""
+    lnk = autostart_shortcut()
+    if not on:
+        try:
+            lnk.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return False
+    target, arguments, workdir, icon_location = _autostart_command()
+    # powershell -Command trae los tokens finales al texto del comando (no a $args):
+    # los valores viajan embebidos entre comillas simples (' -> '') y el script se
+    # pasa con -EncodedCommand (UTF-16LE base64), así no hay problemas de comillas
+    # con espacios ni de acentos en Description.
+    def q(value):
+        return "'" + str(value).replace("'", "''") + "'"
+    script = (f"$lnk={q(lnk)};"
+              "$w=New-Object -ComObject WScript.Shell;"
+              "$s=$w.CreateShortcut($lnk);"
+              f"$s.TargetPath={q(target)};"
+              f"$s.Arguments={q(arguments)};"
+              f"$s.WorkingDirectory={q(workdir)};"
+              f"$s.IconLocation={q(icon_location)};"
+              f"$s.Description={q('Asistemis: notas y órdenes por voz')};"
+              "$s.Save()")
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    subprocess.run(["powershell", "-NoProfile", "-EncodedCommand", encoded],
+                   capture_output=True, creationflags=NO_WINDOW)
+    return lnk.exists()
 
 # antes las notas estaban en el escritorio: si siguen ahí, pasan a los datos de Asistemis
 _OLD_NOTES = desktop_dir() / "notas-asistemis.txt"
