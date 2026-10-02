@@ -72,6 +72,74 @@ def set_theme(theme):
     save_settings({**load_settings(), "theme": theme})
     return theme
 
+
+# --- Arranque con Windows -----------------------------------------------------
+# La única fuente de verdad es la existencia del acceso directo en la carpeta de
+# Inicio (misma carpeta que usa instalar.ps1 / compilar.ps1); no hay flag en ajustes.json.
+
+
+def startup_dir():
+    """Carpeta de Inicio de Windows (Startup) del usuario actual."""
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders") as key:
+            return Path(os.path.expandvars(winreg.QueryValueEx(key, "Startup")[0]))
+    except OSError:
+        return Path.home() / "AppData" / "Roaming" / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+
+
+def autostart_shortcut():
+    """Ruta del acceso directo de arranque de Asistemis."""
+    return startup_dir() / "Asistemis.lnk"
+
+
+def autostart_enabled():
+    """True si Asistemis arranca con Windows (existe el acceso directo de Inicio)."""
+    return autostart_shortcut().exists()
+
+
+def _autostart_command():
+    """(target, arguments, workdir, icon_location) del acceso directo de arranque.
+    Prefiere el .exe instalado; si no existe, pythonw + asistemis.py (mismo criterio que instalar.ps1)."""
+    exe = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "Programs" / "Asistemis" / "Asistemis.exe"
+    if exe.exists():
+        return str(exe), "--segundo-plano", str(exe.parent), f"{exe},0"
+    pythonw = APP_DIR / ".venv" / "Scripts" / "pythonw.exe"
+    if not pythonw.exists():
+        pythonw = Path(sys.executable).parent / "pythonw.exe"
+    script = APP_DIR / "asistemis.py"
+    icon = APP_DIR / "recursos" / "asistemis.ico"
+    icon_location = f"{icon},0" if icon.exists() else f"{pythonw},0"
+    return str(pythonw), f'"{script}" --segundo-plano', str(APP_DIR), icon_location
+
+
+def set_autostart(on):
+    """Activa o desactiva el arranque con Windows creando/borrando el acceso directo de Inicio.
+    Devuelve el estado resultante (True si el acceso directo existe)."""
+    lnk = autostart_shortcut()
+    if not on:
+        try:
+            lnk.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return False
+    target, arguments, workdir, icon_location = _autostart_command()
+    # Los valores viajan como argumentos separados ($args[0..4]), sin interpolar rutas
+    # dentro del script: así no hay problemas de comillas con espacios en las rutas.
+    script = ("& { $lnk, $target, $arguments, $workdir, $icon = $args[0..4];"
+              "$w = New-Object -ComObject WScript.Shell;"
+              "$s = $w.CreateShortcut($lnk);"
+              "$s.TargetPath = $target;"
+              "$s.Arguments = $arguments;"
+              "$s.WorkingDirectory = $workdir;"
+              "$s.IconLocation = $icon;"
+              "$s.Description = 'Asistemis: notas y órdenes por voz';"
+              "$s.Save() }")
+    subprocess.run(["powershell", "-NoProfile", "-Command", script,
+                    str(lnk), target, arguments, workdir, icon_location],
+                   capture_output=True, creationflags=NO_WINDOW)
+    return lnk.exists()
+
 # antes las notas estaban en el escritorio: si siguen ahí, pasan a los datos de Asistemis
 _OLD_NOTES = desktop_dir() / "notas-asistemis.txt"
 if _OLD_NOTES.exists() and not NOTES_FILE.exists():

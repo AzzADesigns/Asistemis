@@ -335,6 +335,12 @@ textarea::placeholder, .add input::placeholder { color: var(--faint); }
       <button class="theme-opt" data-theme="light" type="button"><span class="sw"></span>Claro</button>
       <button class="theme-opt" data-theme="system" type="button"><span class="sw"></span>Sistema</button>
     </div>
+    <p class="sub" style="margin-bottom:8px;">Arranque con Windows</p>
+    <div class="theme-row" id="autostartRow">
+      <button class="theme-opt" data-autostart="on" type="button"><span class="sw"></span>Activado</button>
+      <button class="theme-opt" data-autostart="off" type="button"><span class="sw"></span>Desactivado</button>
+    </div>
+    <p class="sub" style="margin:0 0 14px; font-size:14px;">Si está activado, Asistemis se abre solo al iniciar Windows.</p>
     <div class="modal-actions">
       <button class="btn primary" type="button" onclick="closeSettings()">Listo</button>
     </div>
@@ -369,19 +375,28 @@ $("power").onclick = () => api().power();
 async function openSettings() {
   $("settings").hidden = false;
   markTheme(await api().theme());
+  markAutostart(await api().autostart());
 }
 function closeSettings() { $("settings").hidden = true; }
 function markTheme(theme) {
-  document.querySelectorAll(".theme-opt").forEach(b => b.classList.toggle("on", b.dataset.theme === theme));
+  document.querySelectorAll("#themeRow .theme-opt").forEach(b => b.classList.toggle("on", b.dataset.theme === theme));
 }
 async function chooseTheme(theme) {
   const saved = await api().set_theme(theme);
   applyTheme(saved);
   markTheme(saved);
 }
+function markAutostart(on) {
+  document.querySelectorAll("#autostartRow .theme-opt").forEach(b => b.classList.toggle("on", (b.dataset.autostart === "on") === !!on));
+}
+async function chooseAutostart(on) {
+  const saved = await api().set_autostart(on);
+  markAutostart(saved);
+}
 $("gear").onclick = openSettings;
 $("settings").addEventListener("click", e => { if (e.target === $("settings")) closeSettings(); });
-document.querySelectorAll(".theme-opt").forEach(b => { b.onclick = () => chooseTheme(b.dataset.theme); });
+document.querySelectorAll("#themeRow .theme-opt").forEach(b => { b.onclick = () => chooseTheme(b.dataset.theme); });
+document.querySelectorAll("#autostartRow .theme-opt").forEach(b => { b.onclick = () => chooseAutostart(b.dataset.autostart === "on"); });
 
 /* ---------- notas ---------- */
 let notes = [], notesVersion = null, showActivity = true;
